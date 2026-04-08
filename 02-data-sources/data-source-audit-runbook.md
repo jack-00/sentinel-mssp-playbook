@@ -1,571 +1,705 @@
 # Data Source Audit Runbook
 
-## Overview
-
-This runbook explains how to perform a complete data source audit for a managed client environment in Microsoft Sentinel. The goal is to produce a clear, accurate, and organized spreadsheet that documents every data source flowing into a client's Sentinel workspace — what it is, whether it is healthy, why it matters, and what depends on it.
-
-### Why We Audit by Table, Not by Data Connector
-
-Microsoft Sentinel presents data sources through a connector UI that makes it easy to assume that if a connector shows as connected, everything is working correctly. This assumption is dangerous and wrong.
-
-A data connector in Sentinel is essentially a configuration wizard. It helps you enable a data source but it does not guarantee that data is actually flowing, that all log categories are enabled, that the correct tables are being written to, or that the data volume is healthy. A connector can show a green connected status while silently sending no data at all.
-
-Tables do not lie. The Log Analytics tables in your workspace are the ground truth. If a table has data, something is sending it. If a table is empty or stale, something is broken or was never configured — regardless of what the connector UI shows.
-
-Auditing by table gives you an accurate, unambiguous picture of what data actually exists in the workspace. It also makes it immediately clear which detections are running blind, which watchlists have no data to match against, and where the gaps are in MITRE ATT&CK coverage.
-
-This is the foundation of everything. You cannot tune detections, measure coverage, or have an honest conversation with a client about their security posture without first knowing exactly what data you have.
+> **Purpose:** This runbook guides an engineer through a complete data source audit for a managed client environment in Microsoft Sentinel. The output is a structured, organized spreadsheet that becomes the foundation for the living workbook, the data source watchlist, and all ongoing health monitoring.
+>
+> **Who uses this:** Engineers conducting a first-time audit or a periodic re-audit of a client environment.
+>
+> **What you produce:** A completed, sorted, Excel-formatted audit spreadsheet ready for watchlist upload.
+>
+> **Last Updated:** April 2026
 
 ---
 
-## Audit Checklist
+## Understanding the Workspace Before You Audit
 
-Work through these steps in order. Do not move to the next step until the current one is complete. Check each item off as you go.
+A Microsoft Sentinel workspace is not a flat list of data sources. It contains nine distinct types of components that each play a different role. Understanding these categories is what separates a surface-level audit from a complete one. Every field in the audit spreadsheet maps back to this taxonomy.
 
-### Phase 1 — Discovery
-- [ ] Run the full table inventory query — get every table in the workspace
-- [ ] Run the last log received query — get the most recent record timestamp per table
-- [ ] Run the daily volume query — get average ingestion volume per table over the last 30 days
-- [ ] Export or copy results into the audit spreadsheet — one row per table
-
-### Phase 2 — Classification
-- [ ] Assign Status to every row — Active, Inactive, Review, or No Data
-- [ ] Fill in Source (plain English name) for every table
-- [ ] Fill in Vendor for every table
-- [ ] Assign Category for every table using the approved category list
-- [ ] Fill in Purpose for every table
-- [ ] Fill in Collection for every table
-- [ ] Fill in Detections — reference the AB-series detection catalog
-- [ ] Fill in Watchlists where applicable
-- [ ] Add Notes for anything that needs attention, context, or follow-up
-
-### Phase 3 — Verification
-- [ ] For every table marked Active — verify configuration is complete and correct
-- [ ] For every table marked Inactive — identify root cause and document in Notes
-- [ ] For every table marked Review — document what specifically needs attention
-- [ ] For every table marked No Data — confirm whether it is not applicable or not yet configured, document in Notes
-- [ ] Final review — confirm no tables are missing from the inventory
-- [ ] Sign off — document date completed and engineer name at the bottom of the spreadsheet
-
----
-
-## Spreadsheet Structure
-
-The audit spreadsheet has one row per table. Columns use short header names to keep the spreadsheet clean and readable. The full definition of what goes in each column is documented below. Fill in every field for every row. If a field is not applicable, write N/A — do not leave cells blank.
-
-### Column Header Reference
-
-| Short Header | Full Name | Description |
+| Category | What It Is | Examples |
 |---|---|---|
-| Table | Table Name | Exact Log Analytics table name |
-| Source | Data Source | Plain English description of what sends this data |
-| Vendor | Vendor | Company or product that produces this data source |
-| Category | Category | Type of data — select from approved list |
-| Status | Status | Current health — Active, Inactive, Review, No Data |
-| Last Seen | Last Log Received | Timestamp of most recent record |
-| Daily Vol | Avg Daily Volume | Average ingestion volume over last 30 days |
-| Purpose | Why It Matters | Plain English security impact statement |
-| Collection | How It Collects | Mechanism by which data reaches the workspace |
-| Detections | Detections That Rely On It | AB-series detection IDs and names that query this table |
-| Watchlists | Watchlists That Use It | Watchlists referencing this table |
-| Notes | Notes | Context, issues, action items, follow-up |
+| **Log Sources** | Specific originators writing data to a table. One table can have many log sources. | Palo Alto PA-3200 → CommonSecurityLog, DC01 → Syslog |
+| **Tables** | Log Analytics destinations where data lands. The ground truth layer. | SignInLogs, CommonSecurityLog, BehaviorAnalytics |
+| **Watchlists** | Static reference data used by detections and capabilities | VIP Users, Critical Assets, Domain Controllers |
+| **Capabilities** | Features depending on multiple sources — UEBA, Threat Feed, Fusion ML | If any dependency breaks the capability degrades silently |
+| **Detections** | Analytics rules that consume table data and produce alerts | AB-series rules, Content Hub rules |
+| **Silent Detections** | Detections that verify each log source is actively sending data | Every log source must have one |
+| **Automation** | Logic Apps and playbooks that respond to incidents | Enrichment playbook, ServiceNow ticket creation |
+| **Reports** | Scheduled outputs delivered on a cadence | Logic App reports using watchlists |
+| **Integrations** | API keys and credentials that keep services connected | Threat feed API key, VirusTotal key |
+| **Workbooks** | Interactive live dashboards | Client Security Operations Workbook |
 
 ---
 
-### Column Definitions
+## Why We Audit by Log Source — Not by Connector or Table
+
+Microsoft Sentinel presents data sources through a connector UI that makes it easy to assume that if a connector shows as connected, everything is working. This assumption is dangerous and wrong.
+
+A connector is a configuration wizard. It helps you enable a data source but it does not guarantee data is actually flowing, that all log categories are enabled, that the correct tables are being written to, or that volume is healthy. A connector can show green while silently sending nothing.
+
+Tables are closer to the truth but still not granular enough. A table like `CommonSecurityLog` or `Syslog` can have many different sources writing to it simultaneously. If a Palo Alto firewall stops sending logs but a Fortinet device keeps writing — `CommonSecurityLog` still appears Active. The Palo Alto source is blind and you will never know from the table level alone.
+
+**The log source is the correct audit unit.** One row per originating source. One status per source. This is the only level of granularity that catches individual source failures before they cause missed detections.
 
 ---
 
-#### Table / Table Name
-**What goes here:** The exact Log Analytics table name as it appears in the workspace. This is the technical name used in KQL queries.
+## The Audit Workflow
 
-**Format:** Exact string, no spaces, match case exactly as it appears in query results.
+Work through all ten steps in order. Do not skip ahead.
 
-**Example:** `SignInLogs`
-
-**Note:** Do not use friendly names here. The table name must be exact so that engineers can reference it directly in KQL without translation.
-
----
-
-#### Source / Data Source
-**What goes here:** A plain English description of what is sending data to this table. Write it so a client can understand it without technical knowledge.
-
-**Format:** Free text. Capitalize properly. Do not use abbreviations unless they are universally understood.
-
-**Example:** `Microsoft Entra ID Sign-in Logs`
-
-**Note:** This is different from the table name. The table name is for engineers. The data source description is for everyone.
+- [ ] **Step 1** — Run the main table inventory query in the Logs blade
+- [ ] **Step 2** — Run the shared table breakout queries for CommonSecurityLog, Syslog, and SecurityEvent
+- [ ] **Step 3** — Export results to CSV
+- [ ] **Step 4** — Open in Excel and format as a structured table (Ctrl+T)
+- [ ] **Step 5** — Save immediately as a dated Excel workbook and upload to SharePoint
+- [ ] **Step 6** — Fill in all manual fields using the column definitions and pre-populated reference below
+- [ ] **Step 7** — Run Phase 3 verification for every Active source
+- [ ] **Step 8** — Document all Inactive, Review, and Flag sources in the Notes column with a next step and owner
+- [ ] **Step 9** — Sort the completed spreadsheet alphabetically by Table then by Log Source within each table
+- [ ] **Step 10** — Save and upload the sorted, completed spreadsheet to Sentinel as a watchlist
 
 ---
 
-#### Vendor
-**What goes here:** The company or product that produces this data source.
+## Step 1 — Main Table Inventory Query
 
-**Format:** Free text. Use the official vendor name.
+Run this query first in the Microsoft Sentinel Logs blade. It returns every table in the workspace that has ever received data — including tables that went silent months ago. This is your primary row list.
 
-**Examples:**
-- `Microsoft`
-- `Palo Alto Networks`
-- `Fortinet`
-- `CrowdStrike`
-- `Okta`
-- `Amazon Web Services`
-
-**Note:** For Microsoft-native sources the vendor is always Microsoft. For third-party sources use the product vendor name, not the reseller or integrator.
-
----
-
-#### Category / Category
-**What goes here:** The category that best describes what type of data this source provides. Select from the approved list below.
-
-**Approved categories:**
-- `Identity` — user authentication, directory services, account management
-- `Endpoint` — device telemetry, EDR, antivirus
-- `Email` — mail flow, phishing, attachment scanning
-- `Network` — traffic logs, DNS, DHCP, proxy
-- `Firewall` — perimeter firewall and NGFW logs
-- `Cloud Infrastructure` — Azure resource logs, management plane activity, cloud workload protection
-- `SaaS Application` — third-party cloud applications such as Salesforce, ServiceNow, Okta
-- `Threat Intelligence` — IOC feeds, indicator matching
-- `Compliance and Audit` — M365 audit logs, regulatory compliance events
-- `Vulnerability Management` — scanner results, CVE data, asset risk scoring
-- `Authentication` — MFA, SSO, PAM, privileged access
-- `Other` — anything that does not fit the above categories. Add a note explaining what it is.
-
----
-
-#### Status / Status
-**What goes here:** The current health status of this data source based on your review. Assign one of four values.
-
-**Approved values:**
-
-🟢 **Active** — Data is flowing within the expected timeframe for this source type. Volume looks normal. No issues identified. No action needed.
-
-🔴 **Inactive** — The table has historical data but ingestion has stopped. Something broke at some point after initial configuration. This requires immediate investigation. Document the suspected cause in Notes.
-
-🟡 **Review** — Data is flowing but something is not right. Volume looks abnormal, timestamps are inconsistent, only some expected log categories are present, or the source appears partially configured. An engineer needs to look closer before this can be marked Active.
-
-⚫ **No Data** — The table has never received data, or the data source does not exist in this client's environment. Use Notes to clarify whether this is not applicable for this client or whether it was never configured and should be.
-
-**Important:** Do not mark a source Active just because the connector shows as connected. Verify the table has recent data using the query results from Phase 1.
-
----
-
-#### Last Seen / Last Log Received
-**What goes here:** The timestamp of the most recent record in this table.
-
-**Format:** `YYYY-MM-DD HH:MM UTC`
-
-**Example:** `2026-04-07 22:14 UTC`
-
-**Note:** This comes directly from the Phase 1 KQL query results. Copy the value exactly. If the table has no data this field should read `Never`.
-
----
-
-#### Daily Vol / Avg Daily Volume
-**What goes here:** The average daily ingestion volume for this table over the last 30 days.
-
-**Format:** Use MB for smaller sources, GB for larger ones. Round to one decimal place.
-
-**Examples:**
-- `1.2 GB`
-- `450 MB`
-- `< 1 MB`
-
-**Note:** This comes from the Phase 1 KQL query results. Volume gives you a baseline. If the volume drops significantly in a future audit it is an early warning that something is wrong — even if the source still appears Active.
-
----
-
-#### Purpose / Why It Matters
-**What goes here:** One or two sentences explaining why this data source is important from a security perspective. Write it so a client can understand it. This is the answer to the question "so what?"
-
-**Format:** Plain English. No technical jargon. Client readable.
-
-**Example:** `Sign-in logs are the primary source for detecting compromised accounts, impossible travel, password spray attacks, and unauthorized access attempts. Without this data, identity-based attacks are invisible.`
-
-**Note:** Think about what an attacker can do that you would miss if this data source disappeared. That is your answer.
-
----
-
-#### Collection / How It Collects
-**What goes here:** The mechanism by which data gets from the source into the Log Analytics workspace. This tells engineers how the integration works at a high level.
-
-**Approved values:**
-- `Microsoft Connector` — native Microsoft service-to-service integration, no agent required
-- `AMA Agent` — Azure Monitor Agent installed on a host or VM sending logs to a DCR
-- `DCR / Data Collection Rule` — data collection rule routing logs from a source to the workspace
-- `CEF / Syslog` — third-party device sending logs over Syslog or Common Event Format via a forwarder
-- `REST API` — source pushing data via API, often through a Logic App or Function App
-- `Logic App` — custom Logic App polling or receiving data from a third-party source
-- `Manual / Custom` — custom ingestion pipeline not covered by the above
-
-**Note:** If you are unsure how a source is collecting, the Phase 3 verification steps below will help you identify it.
-
----
-
-#### Detections / Detections That Rely On It
-**What goes here:** The AB-series detection IDs and names from the master detection catalog that query this table. If a detection goes blind when this table has no data, list it here.
-
-**Format:** List each detection on a new line within the cell. Include both ID and name.
-
-**Example:**
-```
-AB00012 - Possible Credential Stuffing
-AB00034 - Impossible Travel - Successful Sign-In
-AB00041 - Legacy Authentication Sign-In Detected
-```
-
-**Note:** If no custom detections query this table write `None - Microsoft Content Hub only` if Content Hub rules use it, or `None` if nothing queries it. A table with no detections depending on it may be a candidate for review — why is it being ingested if nothing uses it?
-
----
-
-#### Watchlists / Watchlists That Use It
-**What goes here:** Any watchlists that reference data from this table or are used in conjunction with detections that depend on this table.
-
-**Format:** List watchlist names separated by commas, or write `None`.
-
-**Example:** `VIP Users, Critical Assets, Domain Controllers`
-
----
-
-#### Notes / Notes
-**What goes here:** Anything that does not fit the other columns. This is a free-text field for context, issues, follow-up items, and client-specific information.
-
-**Use this field for:**
-- Root cause of an Inactive status
-- What specifically needs attention for a Review status
-- Whether a No Data source is not applicable or not yet configured
-- Known false positive patterns for detections using this table
-- Client-specific exceptions or context
-- Outstanding action items with owner and target date
-
-**Format:** Free text. Date-stamp any action items. Example: `2026-04-07 — Syslog forwarder stopped sending after network change. Ticket opened with client IT. Follow up by 2026-04-14.`
-
----
-
-## Example Table
-
-The following shows two example rows to illustrate how the spreadsheet should look when populated. Column headers use the short names. Values are fictional but representative.
-
-| Table | Source | Vendor | Category | Status | Last Seen | Daily Vol | Purpose | Collection | Detections | Watchlists | Notes |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| `SignInLogs` | Microsoft Entra ID Sign-in Logs | Microsoft | Identity | 🟢 Active | 2026-04-07 22:14 UTC | 2.4 GB | Primary source for detecting compromised accounts, password spray, impossible travel, and unauthorized access. Without this, identity-based attacks are invisible. | Microsoft Connector | AB00012 - Possible Credential Stuffing, AB00034 - Impossible Travel | VIP Users, Terminated Employees | Healthy. Non-interactive and service principal sign-in logs also confirmed flowing. |
-| `CommonSecurityLog` | Palo Alto Networks Firewall | Palo Alto Networks | Firewall | 🟡 Review | 2026-04-06 03:42 UTC | 850 MB | Perimeter traffic logs used to detect outbound C2 communication, port scanning, and lateral movement across network segments. | CEF / Syslog | AB00055 - Outbound Connection to Known Malicious IP | Network Ranges, Critical Assets | Volume dropped 60% vs prior 30-day average. Last log over 19 hours ago. Possible Syslog forwarder issue. Marked Review pending investigation. |
-
----
-
-## Phase 1 — Discovery Queries
-
-Run these queries in the Microsoft Sentinel Logs blade. These are templates — substitute the placeholder values where indicated. All queries are designed to be copied and pasted directly.
-
----
-
-### Query 1 — Full Table Inventory
-**Purpose:** Get every table in the workspace that has ever received data. This is your starting list — one row per table in your spreadsheet.
-
-**What it tells you:** Every table that exists in this workspace, when it last received data, and whether it has received anything in the last 30 days.
+**Important — first run instruction:** On the very first audit for a client, remove the time filter entirely or set it to the maximum workspace retention period. You want to capture every table that has ever existed, not just recent ones. Tables that went silent six months ago are exactly what you are looking for. On subsequent audits the 30-day window is sufficient.
 
 ```kql
-// Full Table Inventory
-// Returns all tables with data, sorted by most recently active
-// Run this first — this becomes your row list for the spreadsheet
+// ============================================================
+// MAIN TABLE INVENTORY — Run first. One row per table.
+// First run: remove the 'ago' filter to capture all history
+// Subsequent runs: keep as-is for 30-day window
+// ============================================================
 search *
+| where TimeGenerated > ago(30d) // Remove this line on first run
 | summarize
-    LastLogReceived = max(TimeGenerated),
-    TotalRecords = count()
+    LastSeen = max(TimeGenerated),
+    TotalRecords = count(),
+    AvgDailyRecords = count() / 30
     by $table
-| extend DaysSinceLastLog = datetime_diff('day', now(), LastLogReceived)
+| extend DaysSinceLastLog = datetime_diff('day', now(), LastSeen)
 | extend Status = case(
-    DaysSinceLastLog <= 1, "🟢 Active",
-    DaysSinceLastLog <= 7, "🟡 Review",
-    DaysSinceLastLog > 7, "🔴 Inactive",
+    DaysSinceLastLog <= 1,  "🟢 Active",
+    DaysSinceLastLog <= 7,  "🟡 Review",
+    DaysSinceLastLog > 7,   "🔴 Inactive",
     "⚫ No Data"
 )
+| extend LastSeen_UTC = format_datetime(LastSeen, 'yyyy-MM-dd HH:mm')
+// ── Manual fields ── fill these in after export ──────────────
+| extend LogSource =     "[Manual] — Specific originator e.g. Palo Alto PA-3200, DC01, Entra ID Sign-in"
+| extend Source =        "[Manual] — Plain English name e.g. Microsoft Entra ID Sign-in Logs"
+| extend Vendor =        "[Manual] — e.g. Microsoft, Palo Alto Networks, Fortinet, CrowdStrike"
+| extend Category =      "[Manual] — Identity / Endpoint / Email / Network / Firewall / Cloud Infrastructure / SaaS Application / Threat Intelligence / Compliance and Audit / Vulnerability Management / Authentication / Other"
+| extend Purpose =       "[Manual] — One sentence: what attack or risk does this data help detect?"
+| extend Collection =    "[Manual] — Microsoft Connector / AMA Agent / DCR / CEF Syslog / REST API / Logic App / Manual Custom"
+| extend SilentDet =     "[Manual] — AB##### - Detection name that monitors this source for silence"
+| extend DetStatus =     "[Manual] — Enabled and Healthy / Disabled / Unhealthy / Missing — verify in SentinelHealth"
+| extend Detections =    "[Manual] — AB##### - Detection name, AB##### - Detection name"
+| extend Watchlists =    "[Manual] — Watchlist names that reference this source, or None"
+| extend Notes =         "[Manual] — Issues, action items, exceptions, client context"
+// ─────────────────────────────────────────────────────────────
 | project
-    TableName = $table,
-    LastLogReceived,
+    Table = $table,
+    LogSource,
+    Source,
+    Vendor,
+    Category,
+    Status,
+    LastSeen_UTC,
     DaysSinceLastLog,
     TotalRecords,
-    Status
-| order by LastLogReceived desc
+    AvgDailyRecords,
+    Purpose,
+    Collection,
+    SilentDet,
+    DetStatus,
+    Detections,
+    Watchlists,
+    Notes
+| order by LastSeen_UTC desc
 ```
-
-**How to interpret results:**
-- Every row is a table — add each one to your spreadsheet
-- `LastLogReceived` goes directly into the Last Log Received column
-- `DaysSinceLastLog` helps you assign Status — use it as a guide, not a rule. Use your judgment. A firewall that hasn't logged in 2 days may warrant Review even though the query marks it Active
-- Tables with very low `TotalRecords` and old `LastLogReceived` are good candidates for Review or Inactive
 
 ---
 
-### Query 2 — Average Daily Volume Per Table
-**Purpose:** Get the average daily ingestion volume for each table over the last 30 days.
+## Step 2 — Shared Table Breakout Queries
 
-**What it tells you:** How much data each source is generating on a typical day. This becomes your volume baseline. Future audits that show significant drops are an early warning sign.
+Some tables receive data from multiple different log sources simultaneously. The main query above returns one row per table — which is not granular enough for shared tables. Run each query below that is relevant to the client environment. Each result adds additional rows to your spreadsheet, one per log source within that table.
+
+**When to use these:** If the main query shows CommonSecurityLog, Syslog, or SecurityEvent — always run the corresponding breakout query. These three tables almost always have multiple sources.
+
+---
+
+### Breakout A — CommonSecurityLog (Firewalls, Network Devices, CEF Sources)
 
 ```kql
-// Average Daily Volume Per Table — Last 30 Days
-// Returns ingestion volume per table in MB
-Usage
-| where TimeGenerated > ago(30d)
-| where IsBillable == true
+// ============================================================
+// CommonSecurityLog BREAKOUT — One row per vendor/product
+// Run if CommonSecurityLog appeared in the main query
+// ============================================================
+CommonSecurityLog
 | summarize
-    TotalGB = round(sum(Quantity) / 1000, 3),
-    AvgDailyMB = round(avg(Quantity), 1)
-    by DataType
-| extend AvgDailyVolume = strcat(tostring(AvgDailyMB), " MB")
+    LastSeen = max(TimeGenerated),
+    TotalRecords = count(),
+    AvgDailyRecords = count() / 30
+    by DeviceVendor, DeviceProduct
+| extend DaysSinceLastLog = datetime_diff('day', now(), LastSeen)
+| extend Status = case(
+    DaysSinceLastLog <= 1,  "🟢 Active",
+    DaysSinceLastLog <= 7,  "🟡 Review",
+    DaysSinceLastLog > 7,   "🔴 Inactive",
+    "⚫ No Data"
+)
+| extend LastSeen_UTC = format_datetime(LastSeen, 'yyyy-MM-dd HH:mm')
+| extend Table = "CommonSecurityLog"
+| extend LogSource = strcat(DeviceVendor, " — ", DeviceProduct)
+| extend Source =        "[Manual] — Plain English name e.g. Palo Alto Networks Firewall"
+| extend Vendor =        "[Manual] — Use DeviceVendor value above as guide"
+| extend Category =      "[Manual] — Firewall / Network / Other"
+| extend Purpose =       "[Manual] — What does this specific device log help detect?"
+| extend Collection =    "CEF / Syslog"
+| extend SilentDet =     "[Manual] — AB##### - Silent detection for this specific source"
+| extend DetStatus =     "[Manual] — Enabled and Healthy / Disabled / Unhealthy / Missing"
+| extend Detections =    "[Manual] — AB-series detections relying on this source"
+| extend Watchlists =    "[Manual] — Watchlists referencing this source or None"
+| extend Notes =         "[Manual] — Notes"
 | project
-    TableName = DataType,
-    AvgDailyVolume,
-    TotalGB_30Days = TotalGB
-| order by TotalGB_30Days desc
+    Table,
+    LogSource,
+    Source,
+    Vendor,
+    Category,
+    Status,
+    LastSeen_UTC,
+    DaysSinceLastLog,
+    TotalRecords,
+    AvgDailyRecords,
+    Purpose,
+    Collection,
+    SilentDet,
+    DetStatus,
+    Detections,
+    Watchlists,
+    Notes
+| order by DeviceVendor asc
 ```
-
-**How to interpret results:**
-- Match `TableName` in this query to `TableName` in Query 1 to fill in the Avg Daily Volume column
-- Tables with `0` or near-zero volume despite showing a recent `LastLogReceived` may indicate a source that fires rarely — check Notes column to document this so it is not confused with an issue
-- Tables with unexpectedly high volume may indicate a misconfigured source sending too much data — flag these as Review
 
 ---
 
-### Query 3 — Last Log Per Table With Timestamp
-**Purpose:** Get the precise last log timestamp per table with more detail than Query 1.
-
-**What it tells you:** Exactly when the last record arrived for each table. Use this to fill in the Last Log Received column precisely.
+### Breakout B — Syslog (Linux Agents, AMA Sources, Network Devices)
 
 ```kql
-// Last Log Received — Precise Timestamp Per Table
-// Use this to fill in the Last Log Received column
-// Replace TABLE_NAME with the specific table you want to check
-// Or remove the where clause to check all tables
-search *
-| summarize LastLogReceived = max(TimeGenerated) by $table
-| extend LastLogReceived_UTC = format_datetime(LastLogReceived, 'yyyy-MM-dd HH:mm')
+// ============================================================
+// Syslog BREAKOUT — One row per host and process
+// Run if Syslog appeared in the main query
+// ============================================================
+Syslog
+| summarize
+    LastSeen = max(TimeGenerated),
+    TotalRecords = count(),
+    AvgDailyRecords = count() / 30
+    by HostName, ProcessName
+| extend DaysSinceLastLog = datetime_diff('day', now(), LastSeen)
+| extend Status = case(
+    DaysSinceLastLog <= 1,  "🟢 Active",
+    DaysSinceLastLog <= 7,  "🟡 Review",
+    DaysSinceLastLog > 7,   "🔴 Inactive",
+    "⚫ No Data"
+)
+| extend LastSeen_UTC = format_datetime(LastSeen, 'yyyy-MM-dd HH:mm')
+| extend Table = "Syslog"
+| extend LogSource = strcat(HostName, " — ", ProcessName)
+| extend Source =        "[Manual] — Plain English name e.g. Linux Domain Controller System Logs"
+| extend Vendor =        "[Manual] — e.g. Microsoft, Linux, or specific appliance vendor"
+| extend Category =      "[Manual] — Endpoint / Network / Identity / Other"
+| extend Purpose =       "[Manual] — What does this host or process log help detect?"
+| extend Collection =    "AMA Agent"
+| extend SilentDet =     "[Manual] — AB##### - Silent detection for this specific host"
+| extend DetStatus =     "[Manual] — Enabled and Healthy / Disabled / Unhealthy / Missing"
+| extend Detections =    "[Manual] — AB-series detections relying on this source"
+| extend Watchlists =    "[Manual] — Watchlists referencing this host or None"
+| extend Notes =         "[Manual] — Notes"
 | project
-    TableName = $table,
-    LastLogReceived_UTC
-| order by LastLogReceived desc
-```
-
-**Template note:** To check a single table replace the search with the table name directly:
-```kql
-// Single table version — replace SignInLogs with your table name
-SignInLogs
-| summarize LastLogReceived = max(TimeGenerated)
-| extend LastLogReceived_UTC = format_datetime(LastLogReceived, 'yyyy-MM-dd HH:mm')
+    Table,
+    LogSource,
+    Source,
+    Vendor,
+    Category,
+    Status,
+    LastSeen_UTC,
+    DaysSinceLastLog,
+    TotalRecords,
+    AvgDailyRecords,
+    Purpose,
+    Collection,
+    SilentDet,
+    DetStatus,
+    Detections,
+    Watchlists,
+    Notes
+| order by HostName asc
 ```
 
 ---
 
-### Query 4 — Tables With No Recent Data
-**Purpose:** Quickly surface any table that has not received data in the last 48 hours.
-
-**What it tells you:** Your immediate attention list. These are the tables to investigate first.
+### Breakout C — SecurityEvent (Windows Machines via AMA)
 
 ```kql
-// Tables With No Recent Data — Last 48 Hours
-// These tables need immediate attention
-search *
-| summarize LastLogReceived = max(TimeGenerated) by $table
-| where LastLogReceived < ago(48h)
-| extend HoursSinceLastLog = datetime_diff('hour', now(), LastLogReceived)
+// ============================================================
+// SecurityEvent BREAKOUT — One row per computer
+// Run if SecurityEvent appeared in the main query
+// ============================================================
+SecurityEvent
+| summarize
+    LastSeen = max(TimeGenerated),
+    TotalRecords = count(),
+    AvgDailyRecords = count() / 30
+    by Computer
+| extend DaysSinceLastLog = datetime_diff('day', now(), LastSeen)
+| extend Status = case(
+    DaysSinceLastLog <= 1,  "🟢 Active",
+    DaysSinceLastLog <= 7,  "🟡 Review",
+    DaysSinceLastLog > 7,   "🔴 Inactive",
+    "⚫ No Data"
+)
+| extend LastSeen_UTC = format_datetime(LastSeen, 'yyyy-MM-dd HH:mm')
+| extend Table = "SecurityEvent"
+| extend LogSource = Computer
+| extend Source =        "[Manual] — e.g. Windows Domain Controller Security Events"
+| extend Vendor =        "Microsoft"
+| extend Category =      "[Manual] — Identity / Endpoint — check if DC, server, or workstation"
+| extend Purpose =       "[Manual] — What does this machine's security events help detect?"
+| extend Collection =    "AMA Agent"
+| extend SilentDet =     "[Manual] — AB##### - Silent detection or heartbeat detection for this machine"
+| extend DetStatus =     "[Manual] — Enabled and Healthy / Disabled / Unhealthy / Missing"
+| extend Detections =    "[Manual] — AB-series detections relying on this machine"
+| extend Watchlists =    "[Manual] — Domain Controllers / Critical Assets / or None"
+| extend Notes =         "[Manual] — Notes — flag Domain Controllers and servers explicitly"
 | project
-    TableName = $table,
-    LastLogReceived,
-    HoursSinceLastLog
-| order by HoursSinceLastLog desc
+    Table,
+    LogSource,
+    Source,
+    Vendor,
+    Category,
+    Status,
+    LastSeen_UTC,
+    DaysSinceLastLog,
+    TotalRecords,
+    AvgDailyRecords,
+    Purpose,
+    Collection,
+    SilentDet,
+    DetStatus,
+    Detections,
+    Watchlists,
+    Notes
+| order by Computer asc
 ```
-
-**How to interpret results:**
-- Any table here that is a critical data source — identity, endpoint, firewall — should be flagged Inactive or Review immediately
-- Some tables legitimately receive data infrequently — for example threat intelligence tables may only update daily or weekly. Use judgment and document the expected frequency in Notes
 
 ---
 
-### Query 5 — Sentinel Health — Connector Status
-**Purpose:** Check the health status of data connectors as reported by Sentinel itself. Use this alongside table queries — not instead of them.
+## Steps 3-5 — Export, Format, and Save
 
-**What it tells you:** Which connectors Sentinel considers unhealthy. Cross-reference with your table inventory to identify whether an unhealthy connector matches a table with no recent data.
+**Step 3 — Export to CSV**
+In the Logs blade, run each query and use the Export button to download results as CSV. You will have up to four CSV files — one from the main query and one each for any shared table breakouts you ran.
+
+**Step 4 — Open in Excel and format as a structured table**
+Open the main CSV in Excel. Copy and paste rows from any breakout CSVs below the main data — they share the same column structure. Then:
+- Click any cell in the data
+- Press **Ctrl+T**
+- Confirm the "My table has headers" checkbox is checked
+- Click OK
+
+This formats the data as an Excel Table — not a pivot table. An Excel Table enables column filtering, sorting, and structured references. This is what you want. The column headers will get dropdown arrows. You can now filter by Status, Category, Vendor, or any other column instantly.
+
+**Step 5 — Save as a dated Excel workbook and upload to SharePoint**
+Immediately save the file in Excel Workbook format (.xlsx) — not CSV. Use this naming convention:
+
+```
+[ClientName]-DataSourceAudit-[YYYY-MM-DD].xlsx
+```
+
+Example: `AcmeCorp-DataSourceAudit-2026-04-08.xlsx`
+
+Upload this file to the client's SharePoint folder before filling in any manual fields. This is your baseline snapshot — an unmodified record of exactly what the workspace looked like on this date. Even before the manual fields are filled in it has value as a timestamped record of what tables existed and their health status.
+
+---
+
+## Step 6 — Fill In Manual Fields
+
+Every column with `[Manual]` in the query output needs to be filled in. Work through each row systematically. Do not leave `[Manual]` placeholder text in any cell — replace it with the actual value or N/A.
+
+Use the pre-populated reference table below for Tier 1 and Tier 2 sources — most of the common Microsoft sources are already documented so you are validating rather than researching. For third-party and environment-specific sources you will need to research each one.
+
+---
+
+### Pre-Populated Reference — Common Sources
+
+Use this table to quickly fill in manual fields for the most common sources. Copy the relevant values directly into your spreadsheet. Validate that they match what you see in the environment — do not assume.
+
+| Table | Log Source | Source | Vendor | Category | Collection | Purpose |
+|---|---|---|---|---|---|---|
+| SignInLogs | Microsoft Entra ID | Microsoft Entra ID Interactive Sign-in Logs | Microsoft | Identity | Microsoft Connector | Detects compromised accounts, password spray, impossible travel, MFA fatigue, and unauthorized access attempts |
+| AADNonInteractiveUserSignInLogs | Microsoft Entra ID | Microsoft Entra ID Non-Interactive Sign-in Logs | Microsoft | Identity | Microsoft Connector | Detects service-to-service auth abuse, token theft, and background authentication anomalies often missed in interactive logs |
+| AADServicePrincipalSignInLogs | Microsoft Entra ID | Microsoft Entra ID Service Principal Sign-in Logs | Microsoft | Identity | Microsoft Connector | Detects abuse of service principals and app registrations — a common attacker pivot point that is frequently overlooked |
+| AADManagedIdentitySignInLogs | Microsoft Entra ID | Microsoft Entra ID Managed Identity Sign-in Logs | Microsoft | Identity | Microsoft Connector | Detects abuse of managed identities used by Azure resources to authenticate to other services |
+| AuditLogs | Microsoft Entra ID | Microsoft Entra ID Audit Logs | Microsoft | Identity | Microsoft Connector | Detects directory changes — role assignments, group membership changes, app registrations, and admin operations |
+| AADRiskyUsers | Microsoft Entra ID | Microsoft Entra ID Identity Protection — Risky Users | Microsoft | Identity | Microsoft Connector | Surfaces accounts flagged by Microsoft ML as compromised or at risk — leaked credentials, impossible travel, malware-linked IPs |
+| AADUserRiskEvents | Microsoft Entra ID | Microsoft Entra ID Identity Protection — Risk Events | Microsoft | Identity | Microsoft Connector | Detailed risk event data per sign-in — feeds UEBA and risk-based conditional access detections |
+| OfficeActivity | Microsoft 365 | Microsoft 365 Unified Audit Log | Microsoft | Compliance and Audit | Microsoft Connector | Detects data exfiltration via SharePoint/OneDrive, suspicious mailbox access, email forwarding rules, and OAuth consent abuse |
+| AzureActivity | Azure | Azure Activity — Management Plane | Microsoft | Cloud Infrastructure | Microsoft Connector | Detects unauthorized Azure resource changes — role assignments, VM creation, firewall rule modifications, Key Vault access policy changes |
+| SecurityAlert | Multiple | Microsoft Security Alerts — All Products | Microsoft | Cloud Infrastructure | Microsoft Connector | Consolidated alert feed from all connected Microsoft security products — source of record for XDR-generated alerts in Sentinel |
+| SecurityIncident | Sentinel / XDR | Microsoft Sentinel and XDR Incidents | Microsoft | Cloud Infrastructure | Microsoft Connector | All incidents in the workspace including XDR-correlated multi-stage incidents — primary pipeline source for ServiceNow tickets |
+| BehaviorAnalytics | UEBA | UEBA — Behavioral Analytics Output | Microsoft | Capabilities | Microsoft Connector | ML-generated behavioral anomaly scores per user and entity — requires 14-21 day baseline period before reliable output |
+| IdentityInfo | UEBA | UEBA — Identity Information Table | Microsoft | Capabilities | Microsoft Connector | Enriched user identity data synchronized from Entra ID and on-prem AD — used by detections for user context |
+| ThreatIntelIndicators | Threat Intelligence | Microsoft Defender Threat Intelligence | Microsoft | Threat Intelligence | Microsoft Connector | Current IOC feed — malicious IPs, domains, URLs, file hashes matched against all ingested log data |
+| ThreatIntelObjects | Threat Intelligence | Microsoft Threat Intelligence STIX Objects | Microsoft | Threat Intelligence | Microsoft Connector | STIX 2.1 structured threat intelligence — threat actors, attack patterns, campaign relationships |
+| Heartbeat | AMA Agent | Azure Monitor Agent Heartbeat | Microsoft | Endpoint | AMA Agent | One heartbeat per minute per AMA-connected machine — primary mechanism for detecting agent and machine availability |
+| SentinelHealth | Sentinel | Microsoft Sentinel Health and Audit | Microsoft | Compliance and Audit | Microsoft Connector | Operational health of analytics rules, data connectors, and automation — critical for detecting silent failures |
+| SentinelAudit | Sentinel | Microsoft Sentinel Configuration Audit | Microsoft | Compliance and Audit | Microsoft Connector | Records all configuration changes to the Sentinel workspace — who changed what and when |
+| SecurityEvent | Windows Machine | Windows Security Events — [Computer Name] | Microsoft | Endpoint / Identity | AMA Agent | Windows security event log — authentication events, process creation, privilege use. Critical for on-prem identity and lateral movement detection |
+| CommonSecurityLog | CEF Device | [DeviceVendor] — [DeviceProduct] | [Vendor] | Firewall / Network | CEF / Syslog | Perimeter and network device logs — traffic patterns, connection events, threat signatures. Required for network-based detection |
+| Syslog | Linux Host | [HostName] — [ProcessName] | [Vendor] | Endpoint / Network | AMA Agent | Linux system and application logs — varies by host purpose. Domain controllers, servers, and network appliances each have different detection value |
+
+---
+
+## Column Definitions
+
+Every column is defined below. Short header is what appears in the spreadsheet. Fill in every field. Write N/A if not applicable — do not leave cells blank.
+
+---
+
+**Table** — The exact Log Analytics table name as it appears in query results. Do not modify. This is the key that links every row back to the workspace.
+
+---
+
+**Log Source** — The specific originator writing data to this table. For tables with a single dedicated source this is the same as the Source column. For shared tables (CommonSecurityLog, Syslog, SecurityEvent) this identifies the specific device, host, or process. Format: plain text describing the specific source. Examples: `Palo Alto PA-3200 Series`, `DC01 — Windows Security`, `Entra ID Sign-in`.
+
+---
+
+**Source** — Plain English name of what is sending this data. Write it so a client can understand it without technical knowledge. Capitalize properly. Do not use abbreviations. Example: `Microsoft Entra ID Sign-in Logs`, `Palo Alto Networks Next-Generation Firewall`.
+
+---
+
+**Vendor** — The company or product that produces this data source. Use the official vendor name. Examples: `Microsoft`, `Palo Alto Networks`, `Fortinet`, `CrowdStrike`, `Okta`, `Amazon Web Services`. For Microsoft-native sources the vendor is always Microsoft.
+
+---
+
+**Category** — Select one from the approved list:
+
+| Value | Use For |
+|---|---|
+| Identity | User authentication, directory services, account management |
+| Endpoint | Device telemetry, EDR, antivirus, host-based events |
+| Email | Mail flow, phishing detection, attachment scanning |
+| Network | Traffic logs, DNS, DHCP, proxy |
+| Firewall | Perimeter firewall and NGFW logs |
+| Cloud Infrastructure | Azure resource logs, management plane, cloud workload protection |
+| SaaS Application | Third-party cloud apps — Salesforce, ServiceNow, Okta |
+| Threat Intelligence | IOC feeds, indicator matching |
+| Compliance and Audit | M365 audit logs, Sentinel health, regulatory compliance events |
+| Vulnerability Management | Scanner results, CVE data, asset risk scoring |
+| Authentication | MFA, SSO, PAM, privileged access |
+| Capabilities | UEBA output tables, Fusion ML output — sources that are capability outputs not raw inputs |
+| Other | Anything not fitting the above — add explanation in Notes |
+
+---
+
+**Status** — The current health status of this log source. Assign one of seven values:
+
+| Status | Emoji | Assigned By | Meaning |
+|---|---|---|---|
+| Active | 🟢 | Query | Data flowing within expected timeframe. Volume looks normal. No action needed. |
+| Inactive | 🔴 | Query | Had data, now silent. Something broke. Investigate immediately. Document cause in Notes. |
+| Review | 🟡 | Query | Data flowing but volume anomaly, inconsistent timestamps, or partial configuration suspected. Needs closer look before marking Active. |
+| No Data | ⚫ | Query | In reference list, never received data. Confirm whether not applicable or never configured. Document in Notes. |
+| Missing | 🔵 | Manual | Expected based on connector configuration but not found anywhere in workspace. Connector may be enabled but never successfully sent data. |
+| Flag | 🟠 | Query | New or unexpected source appeared since last audit. Investigate and classify. Do not leave as Flag — resolve to another status. |
+| Decom | 🗑️ | Manual only | Marked for retirement. Source is no longer needed or the device has been decommissioned. Do not delete from watchlist — mark Decom with date and reason in Notes. |
+
+**Important:** Assign status based on query results plus judgment — not connector UI status. A connector showing green is not evidence of a healthy log source.
+
+**Status guidance by source type:**
+
+- Identity sources (SignInLogs, AuditLogs) — should have data every few minutes in any active environment. More than 4 hours without data → Review. More than 24 hours → Inactive.
+- Endpoint sources — depend on device activity. Low volume on weekends may be normal. No data for 48 hours in a business environment → Inactive.
+- Firewall and network sources — near-continuous in any production environment. More than 6 hours → Review. More than 24 hours → Inactive.
+- Threat intelligence tables — may update once daily or less. Check vendor cadence before marking Inactive.
+- UEBA output tables (BehaviorAnalytics, IdentityInfo) — should populate continuously once enabled and past the 14-21 day baseline period.
+
+---
+
+**Last Seen** — Timestamp of the most recent record in this table from this log source. Comes directly from query results. Format: `YYYY-MM-DD HH:MM UTC`. If no data ever: `Never`.
+
+---
+
+**Daily Vol** — Average daily ingestion volume over the last 30 days from query results. Format: use MB for smaller sources, GB for larger ones. Round to one decimal. Examples: `2.4 GB`, `450 MB`, `< 1 MB`. This is your baseline — significant drops in future audits are an early warning sign even before a source goes Inactive.
+
+---
+
+**Purpose** — One to two sentences explaining why this log source matters from a security perspective. Write it so a client can understand it. Answer the question: what would an attacker be able to do undetected if this source disappeared?
+
+Good example: `Firewall logs are the primary source for detecting outbound connections to known malicious infrastructure, port scanning, and unauthorized lateral movement across network segments. Without this data, network-based attack patterns are completely invisible.`
+
+Poor example: `This table contains firewall logs.`
+
+---
+
+**Collection** — How data gets from the source into the workspace. Select one:
+
+| Value | Use For |
+|---|---|
+| Microsoft Connector | Native Microsoft service-to-service integration — no agent required |
+| AMA Agent | Azure Monitor Agent installed on a host sending logs via DCR |
+| CEF / Syslog | Third-party device sending logs over Syslog or Common Event Format via a forwarder |
+| REST API | Source pushing data via API — often through a Logic App or Function App |
+| Logic App | Custom Logic App polling or receiving data from a third-party source |
+| Manual / Custom | Custom ingestion pipeline not covered by the above |
+
+---
+
+**Silent Det** — The AB-series detection ID and name of the silent log source detection that monitors this specific source for silence. Every log source must have one. Format: `AB##### - Detection Name`. If missing: `[Missing] — needs to be created`. This is a mandatory field — do not leave blank.
+
+---
+
+**Det Status** — The current health of the silent detection. Verify against SentinelHealth before filling in. Values: `Enabled and Healthy`, `Enabled but Unhealthy`, `Disabled`, `Missing`. Use the verification query in Phase 3 below.
+
+---
+
+**Detections** — The AB-series detection IDs and names from the master detection catalog that query data from this log source. If a detection goes blind when this source stops sending data, list it here. Format: one detection per line within the cell. If none: `None — Microsoft Content Hub only` or `None`.
+
+---
+
+**Watchlists** — Watchlists that reference data from this log source or are used in detections that depend on it. Example: `Domain Controllers, Critical Assets`. If none: `None`.
+
+---
+
+**Notes** — Free text. Date-stamp action items. Use for: root cause of Inactive status, what specifically needs attention for Review, whether No Data is not applicable or not configured, outstanding action items with owner and target date.
+
+---
+
+## Phase 3 — Verification
+
+For every source marked Active — verify the configuration is complete and correct. Data flowing is not the same as everything being configured correctly. A source can be partially configured — streaming some log categories but missing others — and appear healthy while having significant blind spots.
+
+---
+
+### Verify Silent Detection Is Enabled and Healthy
+
+Run this for every log source. Cross-reference against your Det Status column.
 
 ```kql
-// Sentinel Connector Health
-// Cross-reference with table inventory results
+// Silent Detection Health — All Custom Rules
+// Filters to AB-series rules — your custom detections
 SentinelHealth
-| where TimeGenerated > ago(24h)
-| where SentinelResourceType == "Data Connector"
-| summarize
-    LastStatus = arg_max(TimeGenerated, Status, Description)
+| where SentinelResourceType == "Analytics Rule"
+| where SentinelResourceName matches regex @"^AB\d+"
+| summarize LastStatus = arg_max(TimeGenerated, Status, Description)
     by SentinelResourceName
 | project
-    ConnectorName = SentinelResourceName,
-    LastStatus = Status,
+    DetectionName = SentinelResourceName,
+    HealthStatus = LastStatus,
     LastChecked = TimeGenerated,
     Description
-| order by LastStatus asc
+| order by HealthStatus asc
 ```
 
-**Important note:** A connector showing Healthy here does not mean data is flowing correctly. Always verify with the table queries above. Use this query to catch connectors that Sentinel itself has flagged — it is a supplement to table-level verification, not a replacement.
+Any rule not returning `Success` needs to be investigated. Any AB-series rule not appearing in this list at all may not exist — cross-reference against your SilentDet column to find gaps.
 
 ---
 
-## Phase 2 — Classification Guidance
+### Verify Microsoft Connector Sources — Log Category Completeness
 
-After running the Phase 1 queries and populating the table name, last log received, volume, and initial status fields, work through each row and fill in the remaining columns. The following guidance covers the fields that require human judgment.
+For Microsoft native sources, enabling the connector is not enough. Each log category must be explicitly enabled in diagnostic settings. Run this to confirm each expected table is receiving data:
 
----
-
-### Assigning Status
-
-Use the Phase 1 query results as your starting point but apply judgment. The query assigns status based on time thresholds — your assignment should factor in what the source is and what is normal for it.
-
-**Guidance by source type:**
-
-- **Identity sources** (SignInLogs, AuditLogs) — these should have data every few minutes in any active environment. If last log is more than 4 hours ago mark as Review. More than 24 hours mark Inactive.
-
-- **Endpoint sources** (DeviceEvents, DeviceLogonEvents) — depend on device activity. Low volume on a weekend may be normal. No data for 48 hours in a business environment is Inactive.
-
-- **Firewall and network sources** — should be near-continuous in any production environment. More than 6 hours with no data warrants Review. More than 24 hours is Inactive.
-
-- **Threat intelligence tables** — may update once daily or less frequently. Check the vendor's update cadence before marking Inactive.
-
-- **Compliance and audit tables** — may only populate when specific events occur. No data may mean no events, not a configuration problem. Document this distinction in Notes.
-
----
-
-### Identifying How It Collects
-
-If you are unsure how a source is getting data into the workspace, use the following approach to identify it:
-
-**Step 1 — Check the Data Connectors page**
-In the Sentinel or Defender portal navigate to Data Connectors. Find the connector associated with this table. The connector page will describe the collection method and show configuration status.
-
-**Step 2 — Check for DCRs**
-In the Azure portal navigate to Monitor → Data Collection Rules. If a DCR exists for this source it will be listed here. The DCR will show the source, the transformation if any, and the destination workspace.
-
-**Step 3 — Check for AMA agents**
-If the source is a Windows or Linux machine navigate to the machine in Azure portal → Extensions. If the Azure Monitor Agent extension is installed it is using AMA. Cross-reference with any DCRs that reference this machine.
-
-**Step 4 — Check Logic Apps**
-If the source is a third-party SaaS application or API-based source navigate to Logic Apps in the Azure portal filtered to the client's subscription. Look for Logic Apps with names referencing the vendor or data source.
-
-**Use case example — Palo Alto firewall showing as Review:**
-You see `CommonSecurityLog` with a last log received timestamp from 19 hours ago. The connector page shows connected. To investigate:
-1. Check if a Syslog forwarder VM exists in the client's environment — this is typically a Linux VM that receives CEF logs from the firewall and forwards them to the workspace
-2. Navigate to that VM in Azure portal and check if it is running
-3. SSH to the VM and check the Syslog daemon status — `sudo systemctl status syslog` or `sudo systemctl status rsyslog`
-4. Check the Azure Monitor Agent on the forwarder VM is healthy
-5. Verify the firewall itself is still configured to send Syslog to the forwarder IP
-
-This single example covers the most common reason a firewall source goes Inactive — the forwarder VM stopped, was rebooted, or the firewall Syslog destination was changed.
-
----
-
-### Filling In Purpose (Why It Matters)
-
-Write one to two sentences that answer the question: what would an attacker be able to do undetected if this data source disappeared?
-
-**Good example:** `Firewall logs are the primary source for detecting outbound connections to known malicious infrastructure, port scanning activity, and unauthorized lateral movement across network segments. Without this data, network-based attack patterns are completely invisible.`
-
-**Poor example:** `This table contains firewall logs.`
-
-The good example tells the client what is at stake. The poor example just restates what the column header already implied. Always write for impact.
-
----
-
-## Phase 3 — Verification Guidance
-
-Phase 3 is about confirming that active sources are fully and correctly configured — not just that some data is flowing. Partial configurations are common and dangerous. A source that is streaming one log category but missing three others appears Active but has significant blind spots.
-
----
-
-### Verification Approach by Collection Method
-
-**Microsoft Connector sources (Entra ID, Azure Activity, M365)**
-1. Navigate to the connector page in Sentinel
-2. Confirm all log categories are enabled — for Entra ID this means interactive sign-ins, non-interactive sign-ins, audit logs, service principal sign-ins, managed identity sign-ins, provisioning logs, and identity protection events. Enabling only interactive sign-ins is a common partial configuration
-3. Confirm diagnostic settings in the source service are routing all categories to the correct workspace — check Azure portal → Entra ID → Monitoring → Diagnostic Settings
-4. Run a targeted query for each expected log category to confirm data exists:
 ```kql
 // Template — replace TABLE_NAME with each expected table
-// Run once per expected log category
+// Run once per expected log category for each Microsoft source
 TABLE_NAME
 | where TimeGenerated > ago(24h)
-| summarize Count = count()
+| summarize Count = count(), LastSeen = max(TimeGenerated)
 ```
 
-**AMA Agent sources (Windows Security Events, Syslog)**
-1. Confirm the Azure Monitor Agent is installed and healthy on the source machine — Azure portal → Virtual Machines → Extensions
-2. Confirm a DCR exists and is associated with the machine — Monitor → Data Collection Rules
-3. Confirm the DCR is routing to the correct workspace
-4. Confirm the correct event IDs or Syslog facilities are configured in the DCR — a DCR that only collects System logs but not Security logs will appear healthy while missing the most important events
-5. Validate with a targeted query:
+**Entra ID minimum required tables — verify each:**
+- `SignInLogs`
+- `AADNonInteractiveUserSignInLogs`
+- `AADServicePrincipalSignInLogs`
+- `AADManagedIdentitySignInLogs`
+- `AuditLogs`
+- `AADRiskyUsers`
+- `AADUserRiskEvents`
+
+If any of these return zero results, the diagnostic setting for that log category is not configured in Entra ID. Navigate to Azure portal → Entra ID → Monitoring → Diagnostic Settings and confirm each category is routed to the correct workspace.
+
+---
+
+### Verify AMA Agent Sources — Critical Event IDs
+
+For Windows Security Event sources, the DCR must be configured to collect the right event IDs. A DCR that collects only System logs while missing Security logs appears healthy but is blind to authentication events.
+
 ```kql
-// Windows Security Events verification
-// Checks for critical event IDs that should always be present
+// Windows Security Events — Critical Event ID Verification
+// All of these should be present in any active Windows environment
 SecurityEvent
 | where TimeGenerated > ago(24h)
-| where EventID in (4624, 4625, 4648, 4672, 4688, 4720, 4728)
+| where Computer == "COMPUTER_NAME" // Replace with specific machine or remove for all
+| where EventID in (4624, 4625, 4648, 4672, 4688, 4720, 4728, 4732, 4756)
 | summarize Count = count() by EventID
 | order by EventID asc
 ```
-If any of these critical event IDs are missing from the results the DCR is not collecting them — this is a partial configuration and should be marked Review.
 
-**CEF / Syslog sources (firewalls, network devices)**
-1. Confirm the Syslog forwarder VM is running and healthy
-2. Confirm the Azure Monitor Agent on the forwarder is healthy
-3. Confirm the source device is configured to send Syslog to the forwarder IP on the correct port
-4. Confirm the DCR on the forwarder is routing CEF data to the correct workspace
-5. Validate with:
+| Event ID | What It Captures |
+|---|---|
+| 4624 | Successful logon |
+| 4625 | Failed logon |
+| 4648 | Logon using explicit credentials |
+| 4672 | Special privileges assigned to new logon |
+| 4688 | New process created |
+| 4720 | User account created |
+| 4728 | Member added to global security group |
+| 4732 | Member added to local security group |
+| 4756 | Member added to universal security group |
+
+Any missing event IDs indicate the DCR is not collecting them. Review the DCR configuration in Azure Monitor → Data Collection Rules.
+
+---
+
+### Verify CEF / Syslog Sources — Vendor Specific
+
+For firewall and network device sources writing to CommonSecurityLog:
+
 ```kql
-// CEF source verification
-// Replace with your vendor's DeviceVendor value
+// CEF Source Verification — Replace vendor values
+// Run once per vendor/product combination found in breakout query
 CommonSecurityLog
 | where TimeGenerated > ago(24h)
-| where DeviceVendor == "Palo Alto Networks" // Replace with actual vendor
-| summarize Count = count(), LastLog = max(TimeGenerated)
+| where DeviceVendor == "VENDOR_NAME"    // e.g. "Palo Alto Networks"
+| where DeviceProduct == "PRODUCT_NAME"  // e.g. "PAN-OS"
+| summarize Count = count(), LastSeen = max(TimeGenerated)
 ```
 
-**REST API / Logic App sources**
-1. Navigate to the Logic App in Azure portal
-2. Check the run history — look for recent successful runs and confirm the trigger is firing on schedule
-3. Check for failed runs — Logic App failures often show detailed error messages that identify the root cause
-4. Confirm the API credentials used by the Logic App have not expired — this is the most common cause of API-based source failures
-5. Validate with a targeted table query to confirm data is arriving at the expected frequency
+If this returns zero results while the breakout query showed historical data — the Syslog forwarder stopped receiving from this device. Investigate:
+1. Confirm the Syslog forwarder VM is running
+2. Confirm the AMA on the forwarder is healthy
+3. Confirm the firewall is still configured to send Syslog to the forwarder IP
+4. Confirm the forwarder is listening on the correct port
 
 ---
 
-### Common Issues and What They Mean
+### Verify Heartbeat Coverage
 
-| Symptom | Likely Cause | Action |
-|---|---|---|
-| Connector shows connected, table has no data | Diagnostic settings not configured upstream | Enable diagnostic settings in source service |
-| Table has data but volume is much lower than expected | Partial log category configuration | Review DCR or connector settings for missing categories |
-| Table was active, now Inactive — no changes made | Agent stopped, VM rebooted, or credential expired | Check agent health, VM status, and API credentials |
-| Table shows data but timestamps are hours old | Forwarder delay or batch ingestion lag | Check forwarder health and ingestion pipeline |
-| New table appeared that was not there before | New connector enabled or agent updated | Document and classify in spreadsheet |
-| Table exists but no detections query it | Detection gap or legacy table no longer used | Flag in Notes — evaluate whether ingestion is justified |
+Confirm every AMA-connected machine is sending heartbeats. Any machine in your watchlists (Domain Controllers, Critical Assets) that is not sending heartbeats should be flagged immediately.
+
+```kql
+// Heartbeat Coverage — All AMA Machines
+// Machines not seen in last 1 hour are flagged
+Heartbeat
+| where TimeGenerated > ago(24h)
+| summarize LastHeartbeat = max(TimeGenerated) by Computer, OSType, Category
+| extend HoursSinceLastHeartbeat = datetime_diff('hour', now(), LastHeartbeat)
+| extend HeartbeatStatus = iff(HoursSinceLastHeartbeat <= 1, "🟢 Healthy", "🔴 Missing")
+| project Computer, OSType, Category, LastHeartbeat, HoursSinceLastHeartbeat, HeartbeatStatus
+| order by HoursSinceLastHeartbeat desc
+```
 
 ---
 
-## Sign-Off
+## Steps 8 and 9 — Document and Sort
 
-When all three phases are complete, add the following sign-off block to the bottom of the spreadsheet:
+**Step 8 — Document all non-Active sources**
+Before moving to sort, every row marked Inactive, Review, Flag, or Missing must have a Notes entry that includes:
+- What the issue appears to be
+- What the next step is
+- Who owns the follow-up
+- Target resolution date
 
-```
-Audit Completed By:   [Engineer Name]
-Date Completed:       [YYYY-MM-DD]
-Environment:          [Client Name]
-Total Tables Audited: [Number]
-Active:               [Number]
-Review:               [Number]
-Inactive:             [Number]
-No Data:              [Number]
-Next Audit Due:       [YYYY-MM-DD]
-Notes:                [Any overall observations]
-```
+A row cannot be signed off with a non-Active status and an empty Notes field.
 
-Any table marked Review or Inactive must have a documented action item in its Notes field before sign-off is complete. A table cannot be left in Review or Inactive status without a next step and an owner.
+**Step 9 — Sort alphabetically**
+Sort the completed spreadsheet in Excel:
+1. Click any cell in the Table
+2. Go to Data → Sort
+3. Sort by **Table** (A to Z) first
+4. Then add a second sort level by **Log Source** (A to Z)
+
+This ensures all rows for CommonSecurityLog are grouped together, all rows for Syslog are grouped together, and within each table all log sources are in alphabetical order. This is the sort order the watchlist will maintain when uploaded to Sentinel — making it scannable and predictable for anyone querying it.
 
 ---
 
-*This runbook is maintained in the sentinel-mssp-playbook repository under 02-data-sources. Update it when the audit process changes or new source types require specific verification guidance. Version and date any significant changes.*
+## Step 10 — Upload as Watchlist
+
+Once the spreadsheet is complete and sorted it becomes the data source watchlist in Sentinel. This watchlist is the foundation for the living workbook — the join source that provides all the curated context that cannot be queried from the workspace alone.
+
+**Upload steps:**
+1. In the Sentinel or Defender portal navigate to Watchlists
+2. Create a new watchlist — name it `DataSourceInventory`
+3. Upload the completed and sorted .xlsx file
+4. Set the SearchKey to the `Table` column
+5. Confirm the watchlist loads correctly — row count should match your spreadsheet
+
+**After upload — validate the watchlist:**
+```kql
+// Confirm watchlist loaded correctly
+_GetWatchlist('DataSourceInventory')
+| summarize TotalRows = count()
+| extend ExpectedRows = 0 // Replace with your spreadsheet row count
+```
+
+---
+
+## Known Limitations
+
+The following limitations affect what is visible during the audit. These are documented here so engineers understand what they cannot see and why. These limitations are tracked as future work items in `11-access-and-permissions/`.
+
+**Lighthouse access scope**
+Our access is delegated via Azure Lighthouse scoped to the Sentinel workspace and Log Analytics. Depending on what roles were delegated we may not have access to:
+- Azure VM extensions — cannot verify AMA agent installation status directly
+- Azure Resource tags — cannot query resource classification tags
+- Azure Policy — cannot verify tagging policies
+- Azure Resource Graph — cannot pull full resource inventory
+
+**Workaround:** Heartbeat queries in Sentinel confirm AMA machine health without needing VM extension access. For resource inventory gaps document them in Notes and flag for the client IT team.
+
+**Tables that never received data**
+Log Analytics only registers a table in the workspace schema after at least one record has been written to it. A connector that was configured but never successfully sent a single record will not appear in any query. These sources will show status Missing when compared against the reference watchlist. They are invisible to the main query alone.
+
+**Shared table granularity**
+The breakout queries for CommonSecurityLog, Syslog, and SecurityEvent provide log source granularity but depend on the fields DeviceVendor, HostName, and Computer being populated correctly. Poorly configured sources may have blank or inconsistent values in these fields — document these in Notes and investigate the source configuration.
+
+---
+
+## Onboarding Note
+
+This audit process is designed to be repeatable and eventually automated. The completed watchlist from this audit becomes the baseline that drives the living workbook, the change detection analytics rules, and the automated Teams notifications.
+
+In the future this process will be integrated into the client onboarding workflow — new clients will have this audit completed during onboarding so the watchlist exists from day one. A living onboarding workbook to track data source configuration progress and integrate the tagging strategy is planned as a future capability. See `PROGRAM-MAP.md` for the full future state design.
+
+---
+
+## Audit Sign-Off
+
+Add this block to the bottom of the completed spreadsheet:
+
+```
+Audit Completed By:      [Engineer Name]
+Date Completed:          [YYYY-MM-DD]
+Client:                  [Client Name]
+Total Log Sources:       [Number]
+Active:                  [Number]
+Review:                  [Number]
+Inactive:                [Number]
+No Data:                 [Number]
+Missing:                 [Number]
+Flag:                    [Number]
+Decom:                   [Number]
+Silent Det Coverage:     [X of Y log sources have a silent detection]
+Next Audit Due:          [YYYY-MM-DD]
+Notes:                   [Overall observations]
+Watchlist Uploaded:      Yes / No
+SharePoint Backup:       Yes / No — [link]
+```
+
+No log source may be left in Review, Inactive, Flag, or Missing status without a documented action item and owner in the Notes column. Sign-off is not complete until every non-Active row is accounted for.
+
+---
+
+*This runbook is maintained in the sentinel-mssp-playbook repository under 02-data-sources. Update it when the audit process changes, new source types require specific guidance, or new shared tables are identified. Version and date any significant changes.*
