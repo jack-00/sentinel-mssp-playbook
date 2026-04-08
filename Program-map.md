@@ -2,7 +2,7 @@
 
 > This document captures the complete scope of the sentinel-mssp-playbook program as it stands today and where it is going. It includes the full repository tree, the status of every file, ideas in progress, future work items, known limitations, and items that need to be updated in existing documents. This is the living reference for the entire program. Update it whenever new ideas are locked in or new work is completed.
 >
-> **Last Updated:** April 2026
+> **Last Updated:** April 2026 — Updated after session 2. All Layer 1 and Layer 2 core documents complete. README rewritten. ARCHITECTURE updated. Runbook fully rewritten. Workbook vision documented.
 
 ---
 
@@ -18,21 +18,23 @@ Legend:
 ```
 sentinel-mssp-playbook/
 │
-├── README.md                                          ✅ Complete — public version
-├── ARCHITECTURE.md                                    ✅ Complete — needs minor update (see below)
+├── README.md                                          ✅ Complete — rewritten with full story and vision
+├── ARCHITECTURE.md                                    ✅ Complete — updated taxonomy, six-tab workbook, capabilities
 ├── PROGRAM-MAP.md                                     ✅ This document
 │
 ├── 01-baseline/
 │   ├── README.md                                      📋 Planned
-│   ├── architect-checklist.md                         ✅ Complete — needs terminology update
+│   ├── architect-checklist.md                         ✅ Complete — updated with capabilities, TI table fix, Layer 2 bridge
+│   ├── data-source-baseline.md                        📋 Planned — industry standard data source requirements
 │   ├── connector-runbook.md                           📋 Planned
 │   └── audit-log-enablement.md                        📋 Planned
 │
 ├── 02-data-sources/
 │   ├── README.md                                      📋 Planned
-│   ├── data-source-audit-runbook.md                   🔨 In progress — needs final rewrite
+│   ├── data-source-audit-runbook.md                   ✅ Complete — full rewrite with log source auditing, seven statuses, breakout queries, pre-populated reference
+│   ├── workbook-vision-and-design.md                  ✅ Complete — six-tab design, client meeting narrative, version roadmap
 │   ├── table-reference-watchlist.md                   📋 Planned
-│   └── workbook-design.md                             📋 Planned
+│   └── kql-validation-queries.md                      📋 Planned
 │
 ├── 03-detection-library/
 │   ├── README.md                                      📋 Planned
@@ -403,33 +405,42 @@ The Syslog table problem — many different sources write to Syslog. The watchli
 
 ---
 
-## Files That Need Updates
+## Files Completed This Session
 
-The following existing files need to be updated based on decisions made during brainstorming:
+The following files were built or updated and are ready to commit:
 
-### ARCHITECTURE.md
-- [ ] Update taxonomy section to use final taxonomy from this document
-- [ ] Update workbook tab structure to match the six-tab design above
-- [ ] Add reference to PROGRAM-MAP.md
-- [ ] Update folder structure tree to match full intended repo structure
-- [ ] Add Capabilities as a concept — currently not documented in architecture
+| File | Action | Status |
+|---|---|---|
+| `README.md` | Full rewrite — story-driven, mailbomb narrative, workbook walkthrough, protect the eggs closing | ✅ Ready to commit |
+| `ARCHITECTURE.md` | Updated — repo name, full tree, nine-category taxonomy, capabilities concept, six-tab workbook | ✅ Ready to commit |
+| `01-baseline/architect-checklist.md` | Updated — TI table names corrected, UEBA capability dependency table added, Layer 2 bridge section, footer fixed | ✅ Ready to commit |
+| `02-data-sources/data-source-audit-runbook.md` | Full rewrite — log source as audit unit, seven statuses, four queries, breakout queries, pre-populated reference, Phase 3 verification, known limitations, onboarding note | ✅ Ready to commit |
+| `02-data-sources/workbook-vision-and-design.md` | New file — six-tab design, client meeting narrative, version roadmap, technical notes | ✅ Ready to commit |
 
-### architect-checklist.md (01-baseline)
-- [ ] Update terminology — replace any references to "Composite Features" with "Capabilities"
-- [ ] Add Capabilities section — UEBA, Threat Feed, Fusion ML, SOC Optimization should each have a baseline checklist item confirming they are enabled and dependencies are configured
-- [ ] Add reference to Layer 2 audit as the ongoing verification mechanism for all baseline items
-- [ ] Add note about Threat Intelligence table name change — ThreatIntelligenceIndicator being replaced by ThreatIntelIndicators and ThreatIntelObjects — verify rules reference correct tables
-- [ ] Add note about account entity naming change in Sentinel — may affect analytics rules and automation
+## Files Still To Build — Next Priorities
 
-### data-source-audit-runbook.md (02-data-sources)
-- [ ] Full rewrite planned — incorporate all decisions from brainstorming session:
-  - Updated status values including Flag and Decom
-  - Log Source as primary audit unit — not Table
-  - Updated column list with Log Source and Silent Det columns added
-  - First-run instruction — remove time filter to capture all historical tables
-  - Shared table guidance — Syslog, CommonSecurityLog, SecurityEvent granularity
-  - Silent detection verification as mandatory audit step
-  - Known Limitations section for Lighthouse access constraints
+All previous update items have been completed this session. The following are what comes next when work resumes.
+
+### 01-baseline/ — Next Up
+- [ ] `data-source-baseline.md` — New file. Industry standard data source requirements. Tier 1, Tier 2, Tier 3. Full entry per source with what it is, why it matters, MITRE coverage, how to configure, how to verify, and what good looks like. Defines the data standard every client environment must meet.
+- [ ] `connector-runbook.md` — Step-by-step connector configuration guide
+- [ ] `audit-log-enablement.md` — Diagnostic settings and UAL enablement guide
+- [ ] `README.md` — Folder README explaining how to use the baseline documents
+
+### 02-data-sources/ — Next Up
+- [ ] `table-reference-watchlist.md` — Watchlist schema. How to structure DataSourceInventory, field definitions, how to populate from audit export, how to maintain going forward
+- [ ] `kql-validation-queries.md` — Reusable validation queries per data source type
+- [ ] `README.md` — Folder README
+
+### 03-detection-library/ — Next Major Layer
+- [ ] `catalog-index.md` — Master detection table
+- [ ] `detection-template.md` — Blank template for new detection entries
+- [ ] `README.md` — How to use the catalog
+- [ ] `detections/` — One file per AB-series detection
+
+### Ongoing
+- [ ] Update PROGRAM-MAP status flags as each file is completed
+- [ ] Review and update ARCHITECTURE.md when new layers are added
 
 ---
 
