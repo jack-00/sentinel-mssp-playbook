@@ -100,7 +100,6 @@ The client nods. They were not going to bring it up but they had noticed somethi
 
 **You navigate to Tab 3 — Silent Detections.**
 
-*"This tab is one of my favorites to show clients."*
 
 49 of 49. Every single log source has a corresponding detection that monitors it for silence. If any source stops sending data — even a source nobody is actively watching — a detection fires, an incident is created, and your SOC gets a Teams message within the hour.
 
