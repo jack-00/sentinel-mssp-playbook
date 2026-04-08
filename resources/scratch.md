@@ -128,3 +128,40 @@ one block per type.
 
 Now please work through every table in this workspace one at a time and
 give me a completed block for each one. Start with SecurityEvent.
+
+-
+
+// Volume and health per table — last 30 days
+Usage
+| where TimeGenerated > ago(30d)
+| where IsBillable == true
+| summarize
+    TotalGB = round(sum(Quantity) / 1000, 3),
+    AvgDailyGB = round(sum(Quantity) / 1000 / 30, 3)
+    by DataType
+| join kind=leftouter (
+    search *
+    | summarize LastSeen = max(TimeGenerated) by $table
+    | project DataType = $table, LastSeen
+) on DataType
+| extend DaysSince = datetime_diff('day', now(), LastSeen)
+| extend Status = case(
+    DaysSince <= 1, "🟢 Active",
+    DaysSince <= 7, "🟡 Review",
+    DaysSince > 7,  "🔴 Inactive",
+    "⚫ No Data"
+)
+| extend LastSeen_UTC = format_datetime(LastSeen, 'yyyy-MM-dd HH:mm')
+| extend DailyVol = case(
+    AvgDailyGB < 0.001, "< 1 MB",
+    AvgDailyGB < 1, strcat(tostring(round(AvgDailyGB * 1000, 1)), " MB"),
+    strcat(tostring(AvgDailyGB), " GB")
+)
+| project
+    Table = DataType,
+    Status,
+    LastSeen_UTC,
+    DaysSince,
+    DailyVol,
+    TotalGB_30Days = TotalGB
+| order by TotalGB_30Days desc
