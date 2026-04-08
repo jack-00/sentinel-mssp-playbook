@@ -273,19 +273,29 @@ New features — including multi-tenant content distribution, AI-powered inciden
 **What it is:** Microsoft's threat intelligence feed integrated directly into Sentinel, providing indicators of compromise (IOCs) — malicious IPs, domains, URLs, and file hashes — sourced from Microsoft's global threat research.
 
 **What data it brings:**
-- `ThreatIntelIndicators` — legacy table (being retired July 31, 2025 for new ingestion)
-- `ThreatIntelligenceIndicator` — current primary table
-- `ThreatIntelObjects` — new STIX 2.1 schema table supporting threat actors, attack patterns, relationships
+- `ThreatIntelligenceIndicator` — legacy table. Still ingesting but being phased out. Stop writing new rules against this table
+- `ThreatIntelIndicators` — current primary table for IOC data (IPs, domains, URLs, file hashes)
+- `ThreatIntelObjects` — new STIX 2.1 schema table supporting richer objects — threat actors, attack patterns, relationships, and campaign data
 
-**Why it matters:** Threat intelligence turns raw log data into actionable detections by matching known-bad indicators against your environment's network traffic, DNS, and authentication logs. Without a TI feed, your detections are entirely behavior-based and miss known infrastructure.
+**Why it matters:** Threat intelligence turns raw log data into actionable detections by matching known-bad indicators against your environment's network traffic, DNS, and authentication logs. Without a TI feed, your detections are entirely behavior-based and miss known malicious infrastructure entirely.
 
-**Note:** As of mid-2025, Microsoft Sentinel ingests STIX objects into the new `ThreatIntelIndicators` and `ThreatIntelObjects` tables. Verify your analytics rules reference the correct current table.
+**Important — Capability dependency note:** The Threat Intelligence capability depends on more than just this connector being enabled. The feed must be current, the API key must be valid, and analytics rules must reference the correct current table names. This connector being enabled does not mean TI is fully operational. Full capability health is verified in the data source audit workbook. See `02-data-sources/workbook-vision-and-design.md` — Tab 4 Capabilities.
+
+**Table migration action required:** Any existing analytics rules, hunting queries, or workbooks that reference `ThreatIntelligenceIndicator` must be updated to reference `ThreatIntelIndicators`. Rules referencing the legacy table will continue to work until Microsoft retires it but should be updated now.
 
 **Checklist:**
 - [ ] Microsoft Defender Threat Intelligence connector enabled (standard or premium tier based on license)
-- [ ] TI indicators appearing in `ThreatIntelligenceIndicator` table
-- [ ] Analytics rules referencing TI are using current table names (not deprecated legacy tables)
+- [ ] TI indicators confirmed appearing in `ThreatIntelIndicators` table — not just legacy table
+- [ ] All existing analytics rules audited — any referencing `ThreatIntelligenceIndicator` updated to `ThreatIntelIndicators`
+- [ ] All hunting queries and workbooks audited for legacy table references
 - [ ] Threat intelligence workbook deployed from Content Hub
+- [ ] Indicator freshness verified — confirm indicators are updating on expected cadence
+- [ ] Validation:
+  ```kql
+  ThreatIntelIndicators
+  | where TimeGenerated > ago(24h)
+  | summarize Count = count(), LastUpdate = max(TimeGenerated)
+  ```
 
 ---
 
@@ -389,6 +399,8 @@ New features — including multi-tenant content distribution, AI-powered inciden
 
 ## Section 4 — UEBA (User and Entity Behavior Analytics)
 
+> **Capability note:** UEBA is not just a setting to enable — it is a **Capability** that depends on multiple data sources working correctly together. Enabling UEBA without its required data sources flowing produces degraded or meaningless output. This section covers the configuration step. Ongoing dependency health is monitored in the data source audit workbook. See `02-data-sources/workbook-vision-and-design.md` — Tab 4 Capabilities.
+
 ### What it is
 UEBA analyzes logs from connected data sources to build behavioral baselines for users, hosts, IP addresses, and applications using machine learning. It flags deviations from normal behavior — not rule-based alerts, but ML-identified anomalies.
 
@@ -399,6 +411,20 @@ UEBA analyzes logs from connected data sources to build behavioral baselines for
 - `IdentityInfo` — enriched user identity data from Entra ID and on-prem AD (via MDI)
 - `UserAccessAnalytics` — unusual resource access patterns
 - UEBA enrichments on entity pages — activity timelines, peer comparisons, investigation priority scores
+
+### UEBA Dependency Chain
+UEBA is only as good as the data feeding it. All of the following must be flowing for UEBA to produce reliable output:
+
+| Dependency | Required Table | If Missing |
+|---|---|---|
+| Entra ID sign-in logs | SignInLogs | Identity baselines cannot be built |
+| Entra ID audit logs | AuditLogs | Directory change context missing |
+| Windows security events | SecurityEvent | Host-based behavior invisible |
+| Defender for Endpoint | DeviceLogonEvents | Endpoint activity baselines missing |
+| Entra ID sync | IdentityInfo | User profiles not enriched |
+| MDI sensors (if on-prem AD) | IdentityLogonEvents | On-prem identity invisible |
+
+If any dependency is missing or unhealthy — UEBA continues running but produces degraded output. The BehaviorAnalytics table may still populate but anomaly scoring will be incomplete. This is one of the most common silent capability failures in Sentinel environments.
 
 ### Why it matters
 Security alerts tell you something happened. UEBA tells you whether what happened is normal for that entity. A sign-in from an unusual location is noise. A sign-in from an unusual location *for that specific user, at that specific time of day, to a resource they have never accessed, while their peers show no similar activity* — that is a high-confidence signal. UEBA is what turns raw alerts into prioritized investigations.
@@ -425,6 +451,7 @@ Enable all applicable sources:
 
 ### Checklist
 - [ ] UEBA feature enabled: Settings → Entity behavior analytics → Turn on UEBA
+- [ ] All dependency data sources confirmed flowing before enabling — do not enable UEBA against empty tables
 - [ ] All applicable data sources connected to UEBA
 - [ ] Directory services sync configured (Entra ID, and on-prem AD via MDI if applicable)
 - [ ] Anomaly detection enabled: Settings → Anomalies → Detect Anomalies toggled on
@@ -434,6 +461,7 @@ Enable all applicable sources:
 - [ ] `IdentityInfo` table confirmed populating
 - [ ] SOC optimization cards reviewed — UEBA recommends additional tables to onboard for better coverage
 - [ ] Baseline period noted: UEBA enabled date documented so team knows when baselines become reliable
+- [ ] UEBA dependency health added to workbook monitoring — all dependency tables flagged if any go inactive
 
 ---
 
@@ -662,6 +690,26 @@ SentinelHealth
 
 ---
 
+---
+
+## Next Step — Layer 2 Ongoing Verification
+
+Completing this checklist confirms the environment is **configured** correctly. Configuration alone does not guarantee that data is flowing correctly, that capabilities remain healthy over time, or that silent failures have not occurred since setup.
+
+Proceed to the Data Source Audit Runbook in `02-data-sources/data-source-audit-runbook.md` to establish the living baseline that monitors ongoing health. The audit system validates everything this checklist enables — on an ongoing basis, automatically, with alerts when something changes.
+
+**The relationship between the two documents:**
+
+| This Checklist | The Audit System |
+|---|---|
+| Is it configured? | Is it healthy right now? |
+| Run once at setup | Runs continuously |
+| Pass / fail | Active / Inactive / Review / No Data |
+| Engineer facing | Engineer and client facing |
+| Static | Living |
+
+---
+
 ## Baseline Completion Sign-Off
 
 | Section | Status | Engineer | Date | Notes |
@@ -684,4 +732,4 @@ SentinelHealth
 
 ---
 
-*This document is maintained in the sentinel-blueprint repository. Any changes must be committed with a description of what changed and why. The checklist evolves as Microsoft releases new capabilities — review and update minimum once per quarter.*
+*This document is maintained in the sentinel-mssp-playbook repository under 01-baseline. Any changes must be committed with a description of what changed and why. The checklist evolves as Microsoft releases new capabilities — review and update minimum once per quarter.*
