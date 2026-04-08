@@ -302,14 +302,49 @@ SecurityEvent
 **Step 3 — Export to CSV**
 In the Logs blade, run each query and use the Export button to download results as CSV. You will have up to four CSV files — one from the main query and one each for any shared table breakouts you ran.
 
-**Step 4 — Open in Excel and format as a structured table**
-Open the main CSV in Excel. Copy and paste rows from any breakout CSVs below the main data — they share the same column structure. Then:
+**Step 4 — Open in Excel and merge the breakout rows correctly**
+
+This step is critical. Read it carefully before touching the spreadsheet.
+
+Open the main CSV in Excel. Before you paste anything from the breakout CSVs you need to understand what the main query returned for shared tables and what to do with those rows.
+
+The main query returns **one row per table**. So if `CommonSecurityLog` exists in the workspace it gets exactly one row. But `CommonSecurityLog` likely has multiple sources writing to it — a Palo Alto firewall, a Fortinet device, a Linux forwarder. The single row from the main query does not tell you any of that. The breakout query does.
+
+**The merge process for each shared table:**
+
+1. Find the single `CommonSecurityLog` row in your main query output
+2. **Delete that row entirely**
+3. In its place, **paste the rows from the CommonSecurityLog breakout query** — one row per vendor/product combination
+4. Each pasted row already has `CommonSecurityLog` in the Table column — this is correct
+5. The Log Source column differentiates each one
+
+Repeat this for any other shared tables you ran breakouts for — Syslog, SecurityEvent.
+
+**What the spreadsheet should look like after merging:**
+
+| Table | Log Source | Status | ... |
+|---|---|---|---|
+| CommonSecurityLog | Palo Alto Networks — PAN-OS | 🟢 Active | ... |
+| CommonSecurityLog | Fortinet — FortiGate | 🟢 Active | ... |
+| CommonSecurityLog | Custom Linux App — syslog-ng | 🔴 Inactive | ... |
+| SecurityEvent | DC01 | 🟢 Active | ... |
+| SecurityEvent | DC02 | 🟢 Active | ... |
+| SecurityEvent | WORKSTATION-42 | 🟡 Review | ... |
+| Syslog | LINUXSRV01 — systemd | 🟢 Active | ... |
+| SignInLogs | Microsoft Entra ID | 🟢 Active | ... |
+| AuditLogs | Microsoft Entra ID | 🟢 Active | ... |
+
+Notice that `CommonSecurityLog` appears three times — once per log source. `SecurityEvent` appears three times — once per machine. `SignInLogs` appears once because it has a single dedicated source. This is correct and intentional. The Table column will have repeated values. The Log Source column is what makes each row unique.
+
+**Do not add breakout rows in addition to the original row — replace it.** If you paste the breakout rows without deleting the original you will have a duplicate table-level row sitting alongside the log source rows. That will cause problems when the spreadsheet becomes a watchlist.
+
+Once the merge is complete, format as a structured Excel Table:
 - Click any cell in the data
 - Press **Ctrl+T**
 - Confirm the "My table has headers" checkbox is checked
 - Click OK
 
-This formats the data as an Excel Table — not a pivot table. An Excel Table enables column filtering, sorting, and structured references. This is what you want. The column headers will get dropdown arrows. You can now filter by Status, Category, Vendor, or any other column instantly.
+This formats the data as an Excel Table — not a pivot table. An Excel Table enables column filtering, sorting, and structured references. The column headers will get dropdown arrows. You can now filter by Status, Category, Vendor, or any other column instantly.
 
 **Step 5 — Save as a dated Excel workbook and upload to SharePoint**
 Immediately save the file in Excel Workbook format (.xlsx) — not CSV. Use this naming convention:
