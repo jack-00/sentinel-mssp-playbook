@@ -290,15 +290,14 @@ Navigate to Tab 3. Show the X of Y count. "We have a detection for every single 
 
 This is one of the most powerful moments in the review. It demonstrates that your monitoring is proactive and systematic — not reactive.
 
-### The Integrations Check
-Navigate to Tab 6. Show the table. "Every API key and credential that keeps your security tools running is tracked here with an expiry date. Nothing expires without us knowing about it in advance."
+### The Detection Value Conversation
+Navigate to Tab 7. This is where the ROI story lives.
 
-If anything is in Expiring Soon — "This one needs to be rotated in the next [N] days. We have already scheduled that."
+"This tab shows you exactly which data sources are actively contributing to security incidents — and which ones are ingesting data that nothing is using yet. Over the last 30 days your identity logs contributed to 14 incidents, your endpoint data contributed to 9, and your threat intelligence feed flagged 3 known malicious IPs that showed up in your traffic. That is direct security value from data you are already paying to collect."
 
-### Closing the Review
-Navigate back to Tab 1. "Here is where you started six months ago versus where you are today." Show the improvement — more sources documented, capabilities all green, detection count higher.
+Then flip it. "These three sources here — they are ingesting data but produced zero incident contributions this month. That is either a cost optimization opportunity or a detection gap we need to close. We will talk about which it is."
 
-"Next quarter we want to talk about onboarding [specific source]. Here is what that would give you in terms of detection coverage." This is the improvement roadmap. Always leave the meeting with a forward-looking recommendation.
+That is a conversation no other MSSP is having with their clients. You are not just showing what you caught — you are showing that you understand the economics of their security program.
 
 ---
 
@@ -314,6 +313,81 @@ The workbook turns the audit from a report delivery into a strategic conversatio
 
 ---
 
+## Tab 7 — Detection Value
+
+**What it is:** The ROI tab. Closes the loop between data being ingested and security value being produced. Shows which data sources are actively contributing to incidents and detections, and which are ingesting data that nothing is using. Powers two critical client conversations — proving value and identifying waste.
+
+**What it shows:**
+
+**Section 1 — 30-day incident contribution by data source**
+Which log sources produced or contributed to incidents in the last 30 days. Sorted by incident count descending. Color coded — green for active contributors, yellow for low contribution, gray for zero contribution.
+
+```kql
+// 30-day incident summary by source product
+SecurityIncident
+| where TimeGenerated > ago(30d)
+| where Status != "Closed" or ClosedTime > ago(30d)
+| summarize
+    TotalIncidents = count(),
+    Critical = countif(Severity == "Critical"),
+    High = countif(Severity == "High"),
+    Medium = countif(Severity == "Medium"),
+    FalsePositives = countif(Classification == "FalsePositive")
+    by ProductName
+| extend TruePositiveRate = round((1.0 - todouble(FalsePositives) / TotalIncidents) * 100, 1)
+| order by TotalIncidents desc
+```
+
+**Section 2 — Top firing detections**
+The AB-series and Content Hub detections that fired the most in the last 30 days. Shows detection name, total fires, true positive rate, and which data source feeds it. This is the "here is what we built and here is it working" section.
+
+```kql
+// Top firing detections — last 30 days
+SecurityAlert
+| where TimeGenerated > ago(30d)
+| summarize
+    TotalFired = count(),
+    HighSeverity = countif(AlertSeverity == "High"),
+    Confirmed = countif(Status == "Resolved")
+    by AlertName, ProductName
+| order by TotalFired desc
+| take 20
+```
+
+**Section 3 — Zero contribution sources**
+Data sources that ingested data in the last 30 days but contributed to zero incidents and zero detection fires. This is the waste and gap identification section. Each row is either a cost optimization candidate or an unwritten detection opportunity.
+
+```kql
+// Tables with ingestion but zero alert contribution — last 30 days
+let active_tables = SecurityAlert
+    | where TimeGenerated > ago(30d)
+    | summarize by ProductName;
+Usage
+| where TimeGenerated > ago(30d)
+| where IsBillable == true
+| summarize TotalGB = round(sum(Quantity) / 1000, 2) by DataType
+| where TotalGB > 0
+| join kind=leftanti (active_tables | project DataType = ProductName) on DataType
+| order by TotalGB desc
+```
+
+**Section 4 — Detection value summary card**
+A single summary card at the top of the tab showing:
+- Total incidents this month
+- Data sources actively contributing
+- Data sources with zero contribution
+- Estimated monthly ingestion cost for zero-contribution sources
+- Detection true positive rate overall
+
+**What the client experiences:**
+This tab answers the question every client eventually asks — "what are we actually getting from all of this?" The answer is right there in front of them. Not anecdotal. Not approximate. Exact numbers from their own data.
+
+And for the zero contribution sources — you are not presenting a problem. You are presenting a choice. "This source is costing approximately X per month and has not contributed to any detection this month. We can either reduce ingestion on it or we can write detections that use it. Here is what we could catch if we did the latter."
+
+That is the detection library conversation happening naturally, driven by real data, at the right moment.
+
+---
+
 ## Version Roadmap
 
 **Version 1 — Build this first**
@@ -322,6 +396,7 @@ The workbook turns the audit from a report delivery into a strategic conversatio
 - Tab 3 Silent Detections
 - Tab 4 Capabilities
 - Tab 6 Integrations
+- Tab 7 Detection Value — data is already available, queries are straightforward, client value is immediate
 
 Tab 5 Insights requires the snapshot automation pipeline which is a separate build.
 
