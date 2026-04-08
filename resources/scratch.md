@@ -11,3 +11,37 @@ I need your help analyzing the SecurityEvent table. Please do the following:
 4. Tell me if there are any unusual or unexpected fields in this schema that might indicate custom DCR transformations or non-standard configurations.
 
 The goal is to understand exactly what is in this table, who is writing to it, and what security value it provides so I can document it in our data source inventory.
+
+
+-
+
+I am building a data source inventory spreadsheet for a Microsoft Sentinel
+audit. I need you to help me analyze each table in this workspace and give
+me the specific information to fill in these columns:
+
+- Table: the exact table name
+- Log Source: the specific device, machine, or service writing to this table
+- Source: plain English name of what sends this data
+- Vendor: company that produces this data
+- Category: Identity / Endpoint / Email / Network / Firewall /
+  Cloud Infrastructure / SaaS Application / Threat Intelligence /
+  Compliance and Audit / Vulnerability Management / Authentication / Other
+- Status: Active / Inactive / Review / No Data
+- Last Seen: timestamp of most recent record
+- Daily Vol: average daily volume over last 30 days
+- Purpose: one sentence — what attack or risk does this data help detect
+- Collection: Microsoft Connector / AMA Agent / CEF Syslog /
+  REST API / Logic App / Manual Custom
+
+For the table we are currently analyzing please:
+
+1. Tell me which field identifies the individual log source within this table
+2. Run a query to show me each unique log source and its last seen timestamp
+   and record count so I get one row per source
+3. Give me the plain English Source name, Vendor, and Category for each
+   log source you find
+4. Give me a one sentence Purpose for each log source
+5. Tell me the Collection method
+
+Keep answers focused and practical. I will fill in the spreadsheet directly
+from your answers. Start with the table we just discussed.
