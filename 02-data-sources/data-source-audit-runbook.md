@@ -30,13 +30,13 @@ Work through these steps in order. Do not move to the next step until the curren
 
 ### Phase 2 — Classification
 - [ ] Assign Status to every row — Active, Inactive, Review, or No Data
-- [ ] Fill in Data Source (plain English name) for every table
+- [ ] Fill in Source (plain English name) for every table
 - [ ] Fill in Vendor for every table
 - [ ] Assign Category for every table using the approved category list
-- [ ] Fill in Why It Matters for every table
-- [ ] Fill in How It Collects for every table
-- [ ] Fill in Detections That Rely On It — reference the AB-series detection catalog
-- [ ] Fill in Watchlists That Use It where applicable
+- [ ] Fill in Purpose for every table
+- [ ] Fill in Collection for every table
+- [ ] Fill in Detections — reference the AB-series detection catalog
+- [ ] Fill in Watchlists where applicable
 - [ ] Add Notes for anything that needs attention, context, or follow-up
 
 ### Phase 3 — Verification
@@ -51,7 +51,24 @@ Work through these steps in order. Do not move to the next step until the curren
 
 ## Spreadsheet Structure
 
-The audit spreadsheet has one row per table. Every column is defined below. Fill in every field for every row. If a field is not applicable, write N/A — do not leave cells blank.
+The audit spreadsheet has one row per table. Columns use short header names to keep the spreadsheet clean and readable. The full definition of what goes in each column is documented below. Fill in every field for every row. If a field is not applicable, write N/A — do not leave cells blank.
+
+### Column Header Reference
+
+| Short Header | Full Name | Description |
+|---|---|---|
+| Table | Table Name | Exact Log Analytics table name |
+| Source | Data Source | Plain English description of what sends this data |
+| Vendor | Vendor | Company or product that produces this data source |
+| Category | Category | Type of data — select from approved list |
+| Status | Status | Current health — Active, Inactive, Review, No Data |
+| Last Seen | Last Log Received | Timestamp of most recent record |
+| Daily Vol | Avg Daily Volume | Average ingestion volume over last 30 days |
+| Purpose | Why It Matters | Plain English security impact statement |
+| Collection | How It Collects | Mechanism by which data reaches the workspace |
+| Detections | Detections That Rely On It | AB-series detection IDs and names that query this table |
+| Watchlists | Watchlists That Use It | Watchlists referencing this table |
+| Notes | Notes | Context, issues, action items, follow-up |
 
 ---
 
@@ -59,7 +76,7 @@ The audit spreadsheet has one row per table. Every column is defined below. Fill
 
 ---
 
-#### Table Name
+#### Table / Table Name
 **What goes here:** The exact Log Analytics table name as it appears in the workspace. This is the technical name used in KQL queries.
 
 **Format:** Exact string, no spaces, match case exactly as it appears in query results.
@@ -70,7 +87,7 @@ The audit spreadsheet has one row per table. Every column is defined below. Fill
 
 ---
 
-#### Data Source
+#### Source / Data Source
 **What goes here:** A plain English description of what is sending data to this table. Write it so a client can understand it without technical knowledge.
 
 **Format:** Free text. Capitalize properly. Do not use abbreviations unless they are universally understood.
@@ -98,7 +115,7 @@ The audit spreadsheet has one row per table. Every column is defined below. Fill
 
 ---
 
-#### Category
+#### Category / Category
 **What goes here:** The category that best describes what type of data this source provides. Select from the approved list below.
 
 **Approved categories:**
@@ -117,7 +134,7 @@ The audit spreadsheet has one row per table. Every column is defined below. Fill
 
 ---
 
-#### Status
+#### Status / Status
 **What goes here:** The current health status of this data source based on your review. Assign one of four values.
 
 **Approved values:**
@@ -134,7 +151,7 @@ The audit spreadsheet has one row per table. Every column is defined below. Fill
 
 ---
 
-#### Last Log Received
+#### Last Seen / Last Log Received
 **What goes here:** The timestamp of the most recent record in this table.
 
 **Format:** `YYYY-MM-DD HH:MM UTC`
@@ -145,7 +162,7 @@ The audit spreadsheet has one row per table. Every column is defined below. Fill
 
 ---
 
-#### Avg Daily Volume
+#### Daily Vol / Avg Daily Volume
 **What goes here:** The average daily ingestion volume for this table over the last 30 days.
 
 **Format:** Use MB for smaller sources, GB for larger ones. Round to one decimal place.
@@ -159,7 +176,7 @@ The audit spreadsheet has one row per table. Every column is defined below. Fill
 
 ---
 
-#### Why It Matters
+#### Purpose / Why It Matters
 **What goes here:** One or two sentences explaining why this data source is important from a security perspective. Write it so a client can understand it. This is the answer to the question "so what?"
 
 **Format:** Plain English. No technical jargon. Client readable.
@@ -170,7 +187,7 @@ The audit spreadsheet has one row per table. Every column is defined below. Fill
 
 ---
 
-#### How It Collects
+#### Collection / How It Collects
 **What goes here:** The mechanism by which data gets from the source into the Log Analytics workspace. This tells engineers how the integration works at a high level.
 
 **Approved values:**
@@ -186,7 +203,7 @@ The audit spreadsheet has one row per table. Every column is defined below. Fill
 
 ---
 
-#### Detections That Rely On It
+#### Detections / Detections That Rely On It
 **What goes here:** The AB-series detection IDs and names from the master detection catalog that query this table. If a detection goes blind when this table has no data, list it here.
 
 **Format:** List each detection on a new line within the cell. Include both ID and name.
@@ -202,7 +219,7 @@ AB00041 - Legacy Authentication Sign-In Detected
 
 ---
 
-#### Watchlists That Use It
+#### Watchlists / Watchlists That Use It
 **What goes here:** Any watchlists that reference data from this table or are used in conjunction with detections that depend on this table.
 
 **Format:** List watchlist names separated by commas, or write `None`.
@@ -211,7 +228,7 @@ AB00041 - Legacy Authentication Sign-In Detected
 
 ---
 
-#### Notes
+#### Notes / Notes
 **What goes here:** Anything that does not fit the other columns. This is a free-text field for context, issues, follow-up items, and client-specific information.
 
 **Use this field for:**
@@ -228,22 +245,12 @@ AB00041 - Legacy Authentication Sign-In Detected
 
 ## Example Table
 
-The following shows two example rows to illustrate how the spreadsheet should look when populated. Values are fictional but representative.
+The following shows two example rows to illustrate how the spreadsheet should look when populated. Column headers use the short names. Values are fictional but representative.
 
-| Field | Row 1 | Row 2 |
-|---|---|---|
-| **Table Name** | `SignInLogs` | `CommonSecurityLog` |
-| **Data Source** | Microsoft Entra ID Sign-in Logs | Palo Alto Networks Firewall |
-| **Vendor** | Microsoft | Palo Alto Networks |
-| **Category** | Identity | Firewall |
-| **Status** | 🟢 Active | 🟡 Review |
-| **Last Log Received** | 2026-04-07 22:14 UTC | 2026-04-06 03:42 UTC |
-| **Avg Daily Volume** | 2.4 GB | 850 MB |
-| **Why It Matters** | Primary source for detecting compromised accounts, password spray, impossible travel, and unauthorized access. Without this, identity-based attacks are invisible. | Perimeter traffic logs used to detect outbound C2 communication, port scanning, and lateral movement across network segments. |
-| **How It Collects** | Microsoft Connector | CEF / Syslog |
-| **Detections That Rely On It** | AB00012 - Possible Credential Stuffing, AB00034 - Impossible Travel | AB00055 - Outbound Connection to Known Malicious IP |
-| **Watchlists That Use It** | VIP Users, Terminated Employees | Network Ranges, Critical Assets |
-| **Notes** | Healthy. Non-interactive and service principal sign-in logs also confirmed flowing. | Volume dropped 60% compared to previous 30-day average. Last log received over 19 hours ago. Possible Syslog forwarder issue. Marked Review pending investigation. |
+| Table | Source | Vendor | Category | Status | Last Seen | Daily Vol | Purpose | Collection | Detections | Watchlists | Notes |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| `SignInLogs` | Microsoft Entra ID Sign-in Logs | Microsoft | Identity | 🟢 Active | 2026-04-07 22:14 UTC | 2.4 GB | Primary source for detecting compromised accounts, password spray, impossible travel, and unauthorized access. Without this, identity-based attacks are invisible. | Microsoft Connector | AB00012 - Possible Credential Stuffing, AB00034 - Impossible Travel | VIP Users, Terminated Employees | Healthy. Non-interactive and service principal sign-in logs also confirmed flowing. |
+| `CommonSecurityLog` | Palo Alto Networks Firewall | Palo Alto Networks | Firewall | 🟡 Review | 2026-04-06 03:42 UTC | 850 MB | Perimeter traffic logs used to detect outbound C2 communication, port scanning, and lateral movement across network segments. | CEF / Syslog | AB00055 - Outbound Connection to Known Malicious IP | Network Ranges, Critical Assets | Volume dropped 60% vs prior 30-day average. Last log over 19 hours ago. Possible Syslog forwarder issue. Marked Review pending investigation. |
 
 ---
 
@@ -453,7 +460,7 @@ This single example covers the most common reason a firewall source goes Inactiv
 
 ---
 
-### Filling In Why It Matters
+### Filling In Purpose (Why It Matters)
 
 Write one to two sentences that answer the question: what would an attacker be able to do undetected if this data source disappeared?
 
@@ -561,4 +568,4 @@ Any table marked Review or Inactive must have a documented action item in its No
 
 ---
 
-*This runbook is maintained in the sentinel-blueprint repository under 02-data-sources. Update it when the audit process changes or new source types require specific verification guidance. Version and date any significant changes.*
+*This runbook is maintained in the sentinel-mssp-playbook repository under 02-data-sources. Update it when the audit process changes or new source types require specific verification guidance. Version and date any significant changes.*
