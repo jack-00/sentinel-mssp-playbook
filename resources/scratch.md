@@ -45,3 +45,86 @@ For the table we are currently analyzing please:
 
 Keep answers focused and practical. I will fill in the spreadsheet directly
 from your answers. Start with the table we just discussed.
+
+Let me clarify what I mean by each field in my spreadsheet before we continue.
+This will help you give me the right level of detail.
+
+TABLE — The exact Log Analytics table name. One value per row.
+
+LOG SOURCE — Not individual machines or devices. This is the category of thing
+writing to the table. For example if 50 Windows machines send data to
+SecurityEvent via AMA the log source is "Windows Security Events via AMA" —
+not a list of 50 machines. We only create separate log source rows when
+fundamentally different things are writing to the same table — for example a
+Palo Alto firewall AND a Fortinet VPN both writing to CommonSecurityLog would
+be two separate rows because they are different vendors with different purposes.
+
+SOURCE — Plain English name a non-technical client would understand.
+Example: "Windows Security Event Logs" not "SecurityEvent"
+
+VENDOR — The company that makes the product generating this data.
+Example: Microsoft, Palo Alto Networks, Fortinet.
+
+CATEGORY — The type of data. Choose one exactly as written:
+- Identity
+- Endpoint
+- Email
+- Network
+- Firewall
+- Cloud Infrastructure
+- SaaS Application
+- Threat Intelligence
+- Compliance and Audit
+- Vulnerability Management
+- Authentication
+- Capabilities
+- Other
+
+STATUS — Based on when data was last seen. Choose one exactly as written:
+- 🟢 Active — data seen within last 24 hours
+- 🟡 Review — data seen within last 7 days
+- 🔴 Inactive — no data in over 7 days
+- ⚫ No Data — never had data
+- 🔵 Missing — expected but not found
+- 🟠 Flag — new or unexpected source
+- 🗑️ Decom — marked for retirement
+
+LAST SEEN — Timestamp of the most recent record in this table.
+Format: YYYY-MM-DD HH:MM UTC
+
+DAILY VOL — Average daily ingestion volume over the last 30 days.
+Format: use MB for smaller sources, GB for larger ones.
+
+PURPOSE — One sentence answering: what attack or risk does this data help
+detect? Write it for a business audience not a technical one.
+
+COLLECTION — The mechanism collecting and shipping this data.
+Choose one exactly as written:
+- Microsoft Connector
+- AMA Agent
+- CEF Syslog
+- REST API
+- Logic App
+- Manual Custom
+
+Here is a concrete example of what a correct answer looks like:
+
+Table: SecurityEvent
+Log Source: Windows Security Events via AMA
+Source: Windows Security Event Logs
+Vendor: Microsoft
+Category: Endpoint
+Status: 🟢 Active
+Last Seen: 2026-04-09 07:14 UTC
+Daily Vol: 1.2 GB
+Purpose: Detects authentication-based attacks, lateral movement, privilege
+escalation, and persistence mechanisms across Windows machines.
+Collection: AMA Agent
+
+Please give me answers in exactly this format for every table — one block
+per log source category. If a table has only one log source category give
+me one block. If it has multiple distinct vendor types or purposes give me
+one block per type.
+
+Now please work through every table in this workspace one at a time and
+give me a completed block for each one. Start with SecurityEvent.
