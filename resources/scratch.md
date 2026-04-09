@@ -1,181 +1,29 @@
-I am conducting a data source audit of this Microsoft Sentinel workspace.
+# Multi-Source Table Investigation Queries
 
-I need your help analyzing the SecurityEvent table. Please do the following:
-
-1. Pull the schema for the SecurityEvent table and identify the most important fields for security analysis — specifically fields that identify the source machine, the type of event, the user account involved, and any fields that distinguish different log sources writing to this table.
-
-2. Tell me which field I should use to identify individual machines writing to this table so I can break out one row per log source.
-
-3. Identify which EventIDs are present in this table over the last 30 days and how many records each one has. Group them so I can understand what security coverage this table currently provides.
-
-4. Tell me if there are any unusual or unexpected fields in this schema that might indicate custom DCR transformations or non-standard configurations.
-
-The goal is to understand exactly what is in this table, who is writing to it, and what security value it provides so I can document it in our data source inventory.
-
-
--
-
-I am building a data source inventory spreadsheet for a Microsoft Sentinel
-audit. I need you to help me analyze each table in this workspace and give
-me the specific information to fill in these columns:
-
-- Table: the exact table name
-- Log Source: the specific device, machine, or service writing to this table
-- Source: plain English name of what sends this data
-- Vendor: company that produces this data
-- Category: Identity / Endpoint / Email / Network / Firewall /
-  Cloud Infrastructure / SaaS Application / Threat Intelligence /
-  Compliance and Audit / Vulnerability Management / Authentication / Other
-- Status: Active / Inactive / Review / No Data
-- Last Seen: timestamp of most recent record
-- Daily Vol: average daily volume over last 30 days
-- Purpose: one sentence — what attack or risk does this data help detect
-- Collection: Microsoft Connector / AMA Agent / CEF Syslog /
-  REST API / Logic App / Manual Custom
-
-For the table we are currently analyzing please:
-
-1. Tell me which field identifies the individual log source within this table
-2. Run a query to show me each unique log source and its last seen timestamp
-   and record count so I get one row per source
-3. Give me the plain English Source name, Vendor, and Category for each
-   log source you find
-4. Give me a one sentence Purpose for each log source
-5. Tell me the Collection method
-
-Keep answers focused and practical. I will fill in the spreadsheet directly
-from your answers. Start with the table we just discussed.
-
-Let me clarify what I mean by each field in my spreadsheet before we continue.
-This will help you give me the right level of detail.
-
-TABLE — The exact Log Analytics table name. One value per row.
-
-LOG SOURCE — Not individual machines or devices. This is the category of thing
-writing to the table. For example if 50 Windows machines send data to
-SecurityEvent via AMA the log source is "Windows Security Events via AMA" —
-not a list of 50 machines. We only create separate log source rows when
-fundamentally different things are writing to the same table — for example a
-Palo Alto firewall AND a Fortinet VPN both writing to CommonSecurityLog would
-be two separate rows because they are different vendors with different purposes.
-
-SOURCE — Plain English name a non-technical client would understand.
-Example: "Windows Security Event Logs" not "SecurityEvent"
-
-VENDOR — The company that makes the product generating this data.
-Example: Microsoft, Palo Alto Networks, Fortinet.
-
-CATEGORY — The type of data. Choose one exactly as written:
-- Identity
-- Endpoint
-- Email
-- Network
-- Firewall
-- Cloud Infrastructure
-- SaaS Application
-- Threat Intelligence
-- Compliance and Audit
-- Vulnerability Management
-- Authentication
-- Capabilities
-- Other
-
-STATUS — Based on when data was last seen. Choose one exactly as written:
-- 🟢 Active — data seen within last 24 hours
-- 🟡 Review — data seen within last 7 days
-- 🔴 Inactive — no data in over 7 days
-- ⚫ No Data — never had data
-- 🔵 Missing — expected but not found
-- 🟠 Flag — new or unexpected source
-- 🗑️ Decom — marked for retirement
-
-LAST SEEN — Timestamp of the most recent record in this table.
-Format: YYYY-MM-DD HH:MM UTC
-
-DAILY VOL — Average daily ingestion volume over the last 30 days.
-Format: use MB for smaller sources, GB for larger ones.
-
-PURPOSE — One sentence answering: what attack or risk does this data help
-detect? Write it for a business audience not a technical one.
-
-COLLECTION — The mechanism collecting and shipping this data.
-Choose one exactly as written:
-- Microsoft Connector
-- AMA Agent
-- CEF Syslog
-- REST API
-- Logic App
-- Manual Custom
-
-Here is a concrete example of what a correct answer looks like:
-
-Table: SecurityEvent
-Log Source: Windows Security Events via AMA
-Source: Windows Security Event Logs
-Vendor: Microsoft
-Category: Endpoint
-Status: 🟢 Active
-Last Seen: 2026-04-09 07:14 UTC
-Daily Vol: 1.2 GB
-Purpose: Detects authentication-based attacks, lateral movement, privilege
-escalation, and persistence mechanisms across Windows machines.
-Collection: AMA Agent
-
-Please give me answers in exactly this format for every table — one block
-per log source category. If a table has only one log source category give
-me one block. If it has multiple distinct vendor types or purposes give me
-one block per type.
-
-Now please work through every table in this workspace one at a time and
-give me a completed block for each one. Start with SecurityEvent.
-
--
-
-// Volume and health per table — last 30 days
-Usage
-| where TimeGenerated > ago(30d)
-| where IsBillable == true
-| summarize
-    TotalGB = round(sum(Quantity) / 1000, 3),
-    AvgDailyGB = round(sum(Quantity) / 1000 / 30, 3)
-    by DataType
-| join kind=leftouter (
-    search *
-    | summarize LastSeen = max(TimeGenerated) by $table
-    | project DataType = $table, LastSeen
-) on DataType
-| extend DaysSince = datetime_diff('day', now(), LastSeen)
-| extend Status = case(
-    DaysSince <= 1, "🟢 Active",
-    DaysSince <= 7, "🟡 Review",
-    DaysSince > 7,  "🔴 Inactive",
-    "⚫ No Data"
-)
-| extend LastSeen_UTC = format_datetime(LastSeen, 'yyyy-MM-dd HH:mm')
-| extend DailyVol = case(
-    AvgDailyGB < 0.001, "< 1 MB",
-    AvgDailyGB < 1, strcat(tostring(round(AvgDailyGB * 1000, 1)), " MB"),
-    strcat(tostring(AvgDailyGB), " GB")
-)
-| project
-    Table = DataType,
-    Status,
-    LastSeen_UTC,
-    DaysSince,
-    DailyVol,
-    TotalGB_30Days = TotalGB
-| order by TotalGB_30Days desc
-
-----------------SCRATCH
-
-## Multi-Source Table Investigation Queries
-
-Run each query below for tables that may have multiple log sources.
-Document results in the spreadsheet — one row per distinct source type.
+> **Purpose:** Use these queries to deeply understand what is inside each
+> shared table before documenting it in the audit spreadsheet. Two levels
+> of investigation for every table:
+>
+> **Level 1 — Who is writing to this table?**
+> Identifies distinct log sources within the table.
+>
+> **Level 2 — What are they actually sending?**
+> Identifies the categories, event types, and content within each source.
+>
+> The Azure Firewall lesson: knowing ResourceType = AZUREFIREWALLS is not
+> enough. You need to know which log categories are present —
+> ApplicationRule, NetworkRule, DnsProxy, ThreatIntelLog — because each
+> one represents completely different detection coverage. Going silent on
+> one while others remain active creates a blind spot that is invisible
+> at the surface level.
+>
+> This principle applies everywhere. Always run both levels.
 
 ---
 
-### AzureDiagnostics
+## AzureDiagnostics
+
+### Level 1 — What resource types are writing here?
 ```kql
 AzureDiagnostics
 | where TimeGenerated > ago(30d)
@@ -186,29 +34,264 @@ AzureDiagnostics
 | order by Count desc
 ```
 
-### AzureMetrics
+### Level 2 — What categories does each resource type send?
+```kql
+// Run once per ResourceType found in Level 1
+// Replace AZUREFIREWALLS with your ResourceType
+AzureDiagnostics
+| where TimeGenerated > ago(30d)
+| where ResourceType == "AZUREFIREWALLS"
+| summarize
+    Count = count(),
+    LastSeen = max(TimeGenerated)
+    by Category
+| order by Count desc
+```
+
+### Known category breakdowns to look for:
+
+**AZUREFIREWALLS** — each category is different detection coverage:
+- AzureFirewallApplicationRule — layer 7 application traffic allow/deny
+- AzureFirewallNetworkRule — layer 3/4 network traffic allow/deny
+- AzureFirewallDnsProxy — DNS queries through firewall (only if DNS proxy enabled)
+- AzureFirewallThreatIntelLog — connections matching Microsoft TI indicators
+
+**VAULTS (Key Vault):**
+- AuditEvent — secret access, key operations, certificate events (HIGH VALUE)
+- AzurePolicyEvaluationDetails — policy compliance events
+
+**NETWORKSECURITYGROUPS:**
+- NetworkSecurityGroupEvent — rule change events
+- NetworkSecurityGroupRuleCounter — rule hit counters
+- NetworkSecurityGroupFlowEvent — actual flow logs (HIGH VALUE — requires NSG Flow Logs enabled)
+
+**WORKFLOWS (Logic Apps):**
+- WorkflowRuntime — covers runs, actions, and triggers
+
+### Level 3 — Check for specific resources within a category
+```kql
+// Find which specific resources are sending a category
+// Useful when you have many Key Vaults or Firewalls
+AzureDiagnostics
+| where TimeGenerated > ago(30d)
+| where ResourceType == "VAULTS"
+| where Category == "AuditEvent"
+| summarize
+    Count = count(),
+    LastSeen = max(TimeGenerated)
+    by Resource
+| order by Count desc
+```
+
+### Level 4 — Verify NSG Flow Logs are actually present
+```kql
+// NSG Flow Logs require Network Watcher to be enabled
+// They are frequently missing even when NSG logging appears configured
+AzureDiagnostics
+| where TimeGenerated > ago(30d)
+| where ResourceType == "NETWORKSECURITYGROUPS"
+| where Category == "NetworkSecurityGroupFlowEvent"
+| summarize Count = count(), LastSeen = max(TimeGenerated)
+```
+// If this returns zero — NSG flow logs are NOT configured
+// Only rule events are present — much lower detection value
+
+---
+
+## AzureMetrics
+
+### Level 1 — What resource types are sending metrics?
 ```kql
 AzureMetrics
 | where TimeGenerated > ago(30d)
 | summarize
     Count = count(),
     LastSeen = max(TimeGenerated)
-    by ResourceType, ResourceProvider, Namespace
+    by ResourceType, Namespace
 | order by Count desc
 ```
 
-### DNSQueryLogs
+### Level 2 — What metrics does each resource type send?
 ```kql
-DNSQueryLogs
+// Run once per ResourceType
+AzureMetrics
+| where TimeGenerated > ago(30d)
+| where ResourceType == "VAULTS"
+| summarize
+    Count = count(),
+    LastSeen = max(TimeGenerated)
+    by MetricName
+| order by Count desc
+```
+
+### Level 3 — Check for security-relevant metric anomalies
+```kql
+// Key Vault API hits — spikes may indicate enumeration or attack
+AzureMetrics
+| where TimeGenerated > ago(30d)
+| where ResourceType == "VAULTS"
+| where MetricName == "ServiceApiHit"
+| summarize
+    DailyHits = count()
+    by bin(TimeGenerated, 1d), Resource
+| order by TimeGenerated desc
+```
+
+### Notes on AzureMetrics security value:
+// Most metrics are operational not security-relevant
+// Exceptions worth noting:
+// - Key Vault ServiceApiHit — spikes can indicate enumeration
+// - Firewall health metrics — detect if firewall is degraded
+// - Storage availability — detect if storage is being DoS'd
+// - VM CPU spikes — detect cryptomining
+// Low priority for silent detection unless specific anomaly
+// detections are written against metrics data
+
+---
+
+## CommonSecurityLog
+
+### Level 1 — What vendors and products are writing here?
+```kql
+CommonSecurityLog
 | where TimeGenerated > ago(30d)
 | summarize
     Count = count(),
     LastSeen = max(TimeGenerated)
-    by Resource, ResourceGroup
+    by DeviceVendor, DeviceProduct
 | order by Count desc
 ```
 
-### ThreatIntelIndicators
+### Level 2 — What event categories does each vendor send?
+```kql
+// Run once per DeviceVendor
+CommonSecurityLog
+| where TimeGenerated > ago(30d)
+| where DeviceVendor == "Palo Alto Networks"
+| summarize
+    Count = count(),
+    LastSeen = max(TimeGenerated)
+    by DeviceEventCategory, Activity
+| order by Count desc
+```
+
+### Known category breakdowns to look for:
+
+**Palo Alto Networks:**
+- TRAFFIC — network traffic logs (allow/deny)
+- THREAT — threat detections (malware, C2, exploits)
+- URL — URL filtering logs
+- WILDFIRE — WildFire sandbox results
+- SYSTEM — firewall system events
+// Each category is different detection coverage
+// THREAT and WILDFIRE are highest security value
+// TRAFFIC is high volume — verify it is not creating noise
+
+**Fortinet FortiGate:**
+- utm — unified threat management events
+- traffic — network traffic logs
+- event — system and admin events
+- virus — AV detections
+// utm and virus are highest security value
+
+### Level 3 — Check for allow vs deny distribution
+```kql
+// Understanding allow vs deny ratio helps identify noise vs signal
+CommonSecurityLog
+| where TimeGenerated > ago(7d)
+| where DeviceVendor == "Palo Alto Networks"
+| where DeviceEventCategory == "TRAFFIC"
+| summarize Count = count() by DeviceAction
+| order by Count desc
+```
+
+### Level 4 — Check source and destination distribution
+```kql
+// Identify top talkers — helps understand what this firewall is seeing
+CommonSecurityLog
+| where TimeGenerated > ago(7d)
+| where DeviceVendor == "Palo Alto Networks"
+| where DeviceEventCategory == "THREAT"
+| summarize Count = count() by SourceIP, DestinationIP, Activity
+| order by Count desc
+| take 20
+```
+
+---
+
+## Syslog
+
+### Level 1 — What hosts are writing here?
+```kql
+Syslog
+| where TimeGenerated > ago(30d)
+| summarize
+    Count = count(),
+    LastSeen = max(TimeGenerated)
+    by HostName
+| order by Count desc
+```
+
+### Level 2 — What facilities and severities does each host send?
+```kql
+// Run once per host
+// Facility tells you what component generated the log
+Syslog
+| where TimeGenerated > ago(30d)
+| where HostName == "HOSTNAME"
+| summarize
+    Count = count(),
+    LastSeen = max(TimeGenerated)
+    by Facility, SeverityLevel
+| order by Count desc
+```
+
+### Known Syslog facilities and their security value:
+
+| Facility | What It Is | Security Value |
+|---|---|---|
+| auth / authpriv | Authentication events | HIGH — login, sudo, PAM |
+| daemon | Background service events | MEDIUM — service starts/stops |
+| kern | Kernel messages | MEDIUM — driver issues, OOM |
+| syslog | Syslog daemon itself | LOW — operational |
+| cron | Scheduled task execution | MEDIUM — persistence detection |
+| local0-local7 | Custom application logs | VARIES — depends on config |
+| user | User-level messages | LOW-MEDIUM |
+| mail | Mail system | LOW unless mail server |
+
+### Level 3 — Check authentication events specifically
+```kql
+// Auth facility logs are the highest value in Syslog
+// Verify they are present for hosts that should have them
+Syslog
+| where TimeGenerated > ago(24h)
+| where HostName == "HOSTNAME"
+| where Facility == "auth" or Facility == "authpriv"
+| summarize Count = count(), LastSeen = max(TimeGenerated)
+```
+// If zero — authentication events are not being collected
+// This is a significant gap for Linux machines especially DCs
+
+### Level 4 — Check for CEF forwarder vs Linux host
+```kql
+// Some Syslog hosts are CEF forwarders not Linux machines
+// CEF forwarders should write to CommonSecurityLog not Syslog
+// If you see a forwarder VM writing to Syslog investigate
+Syslog
+| where TimeGenerated > ago(7d)
+| where HostName == "HOSTNAME"
+| summarize
+    Count = count(),
+    SampleMessages = make_set(SyslogMessage, 5)
+    by ProcessName
+| order by Count desc
+```
+
+---
+
+## ThreatIntelIndicators
+
+### Level 1 — What feeds are writing here?
 ```kql
 ThreatIntelIndicators
 | where TimeGenerated > ago(30d)
@@ -219,7 +302,64 @@ ThreatIntelIndicators
 | order by Count desc
 ```
 
-### ThreatIntelObjects
+### Level 2 — What indicator types does each feed provide?
+```kql
+// Run once per SourceSystem
+ThreatIntelIndicators
+| where TimeGenerated > ago(30d)
+| where SourceSystem == "Microsoft Sentinel"
+| summarize
+    Count = count(),
+    LastSeen = max(TimeGenerated)
+    by IndicatorType
+| order by Count desc
+```
+
+### Level 3 — Check indicator freshness per feed
+```kql
+// Stale indicators reduce TI effectiveness significantly
+// Indicators older than 30 days are low confidence
+ThreatIntelIndicators
+| where TimeGenerated > ago(30d)
+| summarize
+    TotalIndicators = count(),
+    FreshIndicators = countif(ExpirationDateTime > now()),
+    StaleIndicators = countif(ExpirationDateTime <= now()),
+    OldestExpiry = min(ExpirationDateTime),
+    NewestExpiry = max(ExpirationDateTime)
+    by SourceSystem
+```
+
+### Level 4 — Check indicator type coverage
+```kql
+// Different indicator types cover different detection scenarios
+// IP only = network detection only
+// URL + Domain = web and DNS detection
+// FileHash = endpoint detection
+// Full coverage = all types present
+ThreatIntelIndicators
+| where TimeGenerated > ago(30d)
+| where ExpirationDateTime > now()
+| summarize Count = count() by IndicatorType, SourceSystem
+| order by SourceSystem asc, Count desc
+```
+
+### Level 5 — Verify TI analytics rules are referencing correct tables
+```kql
+// ThreatIntelligenceIndicator is the LEGACY table
+// ThreatIntelIndicators is the CURRENT table
+// Rules referencing the legacy table still work but should be updated
+// Check if legacy table still has data
+ThreatIntelligenceIndicator
+| where TimeGenerated > ago(7d)
+| summarize Count = count(), LastSeen = max(TimeGenerated)
+```
+
+---
+
+## ThreatIntelObjects
+
+### Level 1 — What feeds are writing STIX objects here?
 ```kql
 ThreatIntelObjects
 | where TimeGenerated > ago(30d)
@@ -230,18 +370,34 @@ ThreatIntelObjects
 | order by Count desc
 ```
 
-### ASimAuditEventLogs
+### Level 2 — What STIX object types are present?
 ```kql
-ASimAuditEventLogs
+// STIX 2.1 supports rich object types beyond just indicators
+// Threat actors, attack patterns, campaigns, relationships
+ThreatIntelObjects
 | where TimeGenerated > ago(30d)
 | summarize
     Count = count(),
     LastSeen = max(TimeGenerated)
-    by EventVendor, EventProduct
+    by ObjectType, SourceSystem
 | order by Count desc
 ```
 
-### ASimNetworkSessionLogs
+### Level 3 — Check relationship objects
+```kql
+// Relationship objects connect threat actors to techniques
+// High value for understanding adversary TTPs
+ThreatIntelObjects
+| where TimeGenerated > ago(30d)
+| where ObjectType == "relationship"
+| summarize Count = count() by SourceSystem
+```
+
+---
+
+## ASimNetworkSessionLogs
+
+### Level 1 — What sources are normalized into this table?
 ```kql
 ASimNetworkSessionLogs
 | where TimeGenerated > ago(30d)
@@ -252,7 +408,78 @@ ASimNetworkSessionLogs
 | order by Count desc
 ```
 
-### ASimWebSessionLogs
+### Level 2 — What event types and actions are present?
+```kql
+ASimNetworkSessionLogs
+| where TimeGenerated > ago(30d)
+| summarize
+    Count = count(),
+    LastSeen = max(TimeGenerated)
+    by EventVendor, EventType, DvcAction
+| order by Count desc
+```
+
+### Level 3 — Verify normalization quality
+```kql
+// Check that key ASIM fields are populated
+// Empty fields indicate parser issues
+ASimNetworkSessionLogs
+| where TimeGenerated > ago(24h)
+| summarize
+    TotalRecords = count(),
+    HasSrcIP = countif(isnotempty(SrcIpAddr)),
+    HasDstIP = countif(isnotempty(DstIpAddr)),
+    HasDstPort = countif(isnotempty(DstPortNumber)),
+    HasAction = countif(isnotempty(DvcAction))
+| extend
+    SrcIPCoverage = round(todouble(HasSrcIP) / TotalRecords * 100, 1),
+    DstIPCoverage = round(todouble(HasDstIP) / TotalRecords * 100, 1)
+```
+// Low coverage percentages indicate parser misconfiguration
+
+---
+
+## ASimAuditEventLogs
+
+### Level 1 — What sources are normalized here?
+```kql
+ASimAuditEventLogs
+| where TimeGenerated > ago(30d)
+| summarize
+    Count = count(),
+    LastSeen = max(TimeGenerated)
+    by EventVendor, EventProduct
+| order by Count desc
+```
+
+### Level 2 — What audit event types are present?
+```kql
+ASimAuditEventLogs
+| where TimeGenerated > ago(30d)
+| summarize
+    Count = count(),
+    LastSeen = max(TimeGenerated)
+    by EventVendor, EventType, EventResult
+| order by Count desc
+```
+
+### Level 3 — Verify normalization quality
+```kql
+ASimAuditEventLogs
+| where TimeGenerated > ago(24h)
+| summarize
+    TotalRecords = count(),
+    HasActorUsername = countif(isnotempty(ActorUsername)),
+    HasObject = countif(isnotempty(Object)),
+    HasEventResult = countif(isnotempty(EventResult))
+| extend ActorCoverage = round(todouble(HasActorUsername) / TotalRecords * 100, 1)
+```
+
+---
+
+## ASimWebSessionLogs
+
+### Level 1 — What sources are normalized here?
 ```kql
 ASimWebSessionLogs
 | where TimeGenerated > ago(30d)
@@ -263,7 +490,103 @@ ASimWebSessionLogs
 | order by Count desc
 ```
 
-### Operation
+### Level 2 — What web session types are present?
+```kql
+ASimWebSessionLogs
+| where TimeGenerated > ago(30d)
+| summarize
+    Count = count(),
+    LastSeen = max(TimeGenerated)
+    by EventVendor, EventType, DvcAction, HttpStatusCode
+| order by Count desc
+```
+
+### Level 3 — Check for blocked vs allowed traffic
+```kql
+ASimWebSessionLogs
+| where TimeGenerated > ago(7d)
+| summarize Count = count() by DvcAction
+| order by Count desc
+```
+
+---
+
+## SecurityEvent
+
+### Level 1 — What machines are writing here?
+```kql
+SecurityEvent
+| where TimeGenerated > ago(30d)
+| summarize
+    Count = count(),
+    LastSeen = max(TimeGenerated)
+    by Computer
+| order by Count desc
+```
+
+### Level 2 — What Event IDs are present?
+```kql
+SecurityEvent
+| where TimeGenerated > ago(30d)
+| summarize Count = count() by EventID
+| order by Count desc
+```
+
+### Level 3 — Check critical Event ID coverage
+```kql
+// These Event IDs should be present in any active Windows environment
+// Missing IDs indicate DCR or audit policy gaps
+let critical_ids = datatable(EventID:int, Description:string)
+[
+    4624, "Successful logon",
+    4625, "Failed logon",
+    4648, "Logon with explicit credentials",
+    4672, "Special privileges assigned",
+    4688, "New process created",
+    4698, "Scheduled task created",
+    4720, "User account created",
+    4728, "Member added to global group",
+    4732, "Member added to local group",
+    4756, "Member added to universal group",
+    4740, "Account locked out",
+    4771, "Kerberos pre-auth failed",
+    4776, "NTLM credential validation",
+    4768, "Kerberos TGT requested",
+    4769, "Kerberos service ticket requested"
+];
+let present_ids = SecurityEvent
+    | where TimeGenerated > ago(24h)
+    | summarize by EventID;
+critical_ids
+| join kind=leftanti present_ids on EventID
+| project
+    EventID,
+    Description,
+    Status = "MISSING — not being collected"
+```
+// Any row returned here is a gap in your Windows security coverage
+
+### Level 4 — Check if process creation has command line
+```kql
+// 4688 without CommandLine is significantly less valuable
+// CommandLine requires audit policy to be configured in Windows
+SecurityEvent
+| where TimeGenerated > ago(24h)
+| where EventID == 4688
+| summarize
+    TotalProcessCreation = count(),
+    HasCommandLine = countif(isnotempty(CommandLine))
+| extend CommandLineCoverage = round(todouble(HasCommandLine) / TotalProcessCreation * 100, 1)
+```
+// If CommandLineCoverage is 0% — process creation auditing is
+// enabled but CommandLine logging is not configured in Windows
+// audit policy. Significant detection gap.
+
+---
+
+## Operation
+
+### Level 1 — What operation categories are present?
 ```kql
 Operation
 | where TimeGenerated > ago(30d)
@@ -274,8 +597,32 @@ Operation
 | order by Count desc
 ```
 
-### Salesforce_ListViewEvent
+### Level 2 — Check for error patterns
 ```kql
+// Operation table contains workspace errors and warnings
+// Recurring errors may indicate ingestion or agent problems
+Operation
+| where TimeGenerated > ago(7d)
+| where OperationStatus != "Succeeded"
+| summarize
+    Count = count(),
+    LastSeen = max(TimeGenerated)
+    by OperationCategory, Detail
+| order by Count desc
+```
+
+### Notes on Operation:
+// Low security value but useful for troubleshooting
+// Errors here often explain why other tables have gaps
+// Check when a table suddenly goes inactive
+
+---
+
+## Salesforce_ListViewEvent and Salesforce_LoginEvent
+
+### Level 1 — Check if multiple Salesforce orgs write here
+```kql
+// Replace table name as needed
 Salesforce_ListViewEvent
 | where TimeGenerated > ago(30d)
 | summarize
@@ -285,13 +632,107 @@ Salesforce_ListViewEvent
 | order by Count desc
 ```
 
-### Salesforce_LoginEvent
+### Level 2 — Check event types within the table
 ```kql
 Salesforce_LoginEvent
 | where TimeGenerated > ago(30d)
 | summarize
     Count = count(),
     LastSeen = max(TimeGenerated)
-    by OrganizationId
+    by LoginType, LoginStatus
 | order by Count desc
 ```
+
+### Level 3 — Check for failed logins
+```kql
+// Failed Salesforce logins are high value for detecting
+// credential attacks against the platform
+Salesforce_LoginEvent
+| where TimeGenerated > ago(30d)
+| where LoginStatus != "Success"
+| summarize
+    Count = count(),
+    LastSeen = max(TimeGenerated)
+    by LoginStatus, LoginType
+| order by Count desc
+```
+
+---
+
+## Heartbeat
+
+### Level 1 — What machines are sending heartbeats?
+```kql
+Heartbeat
+| where TimeGenerated > ago(30d)
+| summarize
+    Count = count(),
+    LastSeen = max(TimeGenerated),
+    LastHeartbeat = max(TimeGenerated)
+    by Computer, OSType, Category, Version
+| order by LastSeen desc
+```
+
+### Level 2 — Check for machines that recently stopped
+```kql
+// Machines that sent heartbeats in last 30 days but
+// not in the last 24 hours — potential agent failure
+Heartbeat
+| where TimeGenerated > ago(30d)
+| summarize LastSeen = max(TimeGenerated) by Computer
+| where LastSeen < ago(24h)
+| extend HoursSince = datetime_diff('hour', now(), LastSeen)
+| order by HoursSince desc
+```
+
+### Level 3 — Check agent versions
+```kql
+// Outdated AMA versions can cause ingestion issues
+Heartbeat
+| where TimeGenerated > ago(24h)
+| summarize LastSeen = max(TimeGenerated) by Computer, Version
+| order by Version asc
+```
+
+---
+
+## General — Verify Table Health After Investigation
+
+After completing the investigation for any table run this
+final health check to confirm current status:
+
+```kql
+// Universal table health check
+// Replace TABLE_NAME with actual table
+TABLE_NAME
+| where TimeGenerated > ago(24h)
+| summarize
+    RecordCount = count(),
+    LastRecord = max(TimeGenerated),
+    HoursSinceLastRecord = datetime_diff('hour', now(), max(TimeGenerated))
+```
+
+---
+
+## The Deep Dive Principle
+
+Every shared table investigation should answer these questions
+before you finalize the spreadsheet rows:
+
+1. How many distinct sources write to this table?
+2. What categories or event types does each source send?
+3. Are all expected categories present or are some missing?
+4. What is the security value of each category?
+5. Should missing categories be flagged as gaps?
+6. Does the table need one row or multiple rows?
+
+The Azure Firewall example is the model:
+- Surface level: one source, AZUREFIREWALLS
+- Deep level: four categories, each different detection coverage
+- DnsProxy missing = DNS blind spot not visible at surface level
+- Correct documentation: four rows or one row with detailed Notes
+
+Apply this thinking to every shared table. What looks like
+one thing at the surface is often multiple things underneath.
+Understanding what is underneath is what separates a real audit
+from a checkbox exercise.
