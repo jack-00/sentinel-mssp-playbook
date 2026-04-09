@@ -796,3 +796,177 @@ No log source may be signed off with a non-Active status without a documented ac
 ---
 
 *This runbook is maintained in sentinel-mssp-playbook under 02-data-sources. Update when the audit process changes, new source types require guidance, or new shared tables are identified.*
+
+---
+
+## DetectionCatalog — Building and Maintaining the Detection Watchlist
+
+The DetectionCatalog watchlist is the detection team's counterpart to the DataSourceInventory watchlist. It documents every AB-series detection — what tables it queries, what it catches, and what watchlists it uses. The GetEnrichedInventory function joins these two watchlists together so the workbook can show detection coverage per data source automatically.
+
+**This step happens before the main audit.** Knowing which detections exist and which tables they depend on informs how you classify each data source — specifically the SilentDet field and the tier assignment for silent detection monitoring.
+
+---
+
+### Why This Exists
+
+Without the DetectionCatalog:
+- You fill in the Detections field in DataSourceInventory manually — slow and error prone
+- You have no automated way to know which data sources have zero detection coverage
+- The workbook cannot show detection counts per source
+- Gap analysis requires manual cross-referencing
+
+With the DetectionCatalog:
+- The GetEnrichedInventory function joins it automatically
+- Detection counts appear in the workbook with no manual entry
+- Zero-detection sources are immediately visible as gaps
+- The detection team owns their data — platform team owns theirs
+
+---
+
+### The Four Fields
+
+| Field | What Goes Here | Who Fills It In |
+|---|---|---|
+| AnalyticRule | AB##### - Full detection name | Python script |
+| Table | Comma separated exact table names this detection queries | Python script |
+| Description | Plain English — what does this detection catch | Detection team — manual |
+| Watchlists | Comma separated watchlist names this detection references — or None | Python script |
+
+**Critical:** The Table field must use exact table names as they appear in Log Analytics. This is the join key between DetectionCatalog and DataSourceInventory. If a table name in DetectionCatalog does not exactly match a Table value in DataSourceInventory the join silently fails for that row.
+
+---
+
+### Step 1 — Generate the Initial Skeleton via KQL
+
+Run this query in the Logs blade to produce a skeleton CSV of all AB-series rules that have run. This gives you a starting point with rule names pre-populated. The detection team then fills in Description for each row.
+
+```kql
+// ============================================================
+// DETECTION CATALOG SKELETON — Run once to generate starter CSV
+// Returns all AB-series rules that have executed
+// Note: disabled rules will not appear — see gap detection below
+// ============================================================
+SentinelHealth
+| where SentinelResourceType == "Analytics Rule"
+| where SentinelResourceName matches regex @"^AB\d+"
+| summarize LastRun = max(TimeGenerated)
+    by SentinelResourceName
+| extend AnalyticRule =  SentinelResourceName
+| extend Table =         "[Manual] — exact table names comma separated"
+| extend Description =   "[Manual] — plain English what does this detection catch"
+| extend Watchlists =    "[Manual] — watchlist names comma separated or None"
+| project
+    AnalyticRule,
+    Table,
+    Description,
+    Watchlists
+| order by AnalyticRule asc
+```
+
+Export this as CSV. Open in Excel. Format as Excel Table with Ctrl+T. Save as:
+```
+[ClientName]-DetectionCatalog-[YYYY-MM-DD].xlsx
+```
+
+Upload to SharePoint before filling in any manual fields.
+
+**Important limitation:** This query only returns rules that have run at least once. Disabled rules and newly created rules that have not yet executed will not appear. Use the gap detection query below to find what is missing.
+
+---
+
+### Step 2 — Request Python Script Output from Detection Team
+
+While you have the KQL skeleton the detection team's Python script produces a more complete and accurate version. Request the following from them:
+
+**What to ask for:**
+- Full list of all AB-series analytics rules — including disabled ones
+- For each rule: rule name, enabled status, tables queried, watchlists referenced, MITRE tactic and technique
+- Output as CSV in the same four-column format: AnalyticRule, Table, Description, Watchlists
+
+**What they already have:**
+Their script already pulls enabled status, tables, watchlists, and MITRE from the Sentinel Analytics Rules API. The only field that needs manual input from them is Description — plain English explanation of what each detection catches.
+
+**The validation process:**
+Once you receive their CSV compare it against your KQL skeleton:
+- Rules in KQL skeleton but not in Python output — investigate why
+- Rules in Python output but not in KQL skeleton — these are disabled rules or rules that have never fired
+- Discrepancies in Table values — clarify with detection team which is correct
+
+The Python script output is the authoritative version. Use it as the final DetectionCatalog once Description is filled in.
+
+---
+
+### Step 3 — Gap Detection Query
+
+After the initial DetectionCatalog is uploaded use this query to find rules that are missing from it. Run this after every detection team release to catch new rules that need to be added.
+
+```kql
+// ============================================================
+// DETECTION CATALOG GAP DETECTION
+// Finds AB-series rules in SentinelHealth not in DetectionCatalog
+// Run periodically to catch new detections that need to be added
+// ============================================================
+let catalog = _GetWatchlist('DetectionCatalog')
+| summarize by AnalyticRule;
+SentinelHealth
+| where SentinelResourceType == "Analytics Rule"
+| where SentinelResourceName matches regex @"^AB\d+"
+| summarize LastRun = max(TimeGenerated)
+    by SentinelResourceName
+| join kind=leftanti (
+    catalog
+    | project SentinelResourceName = AnalyticRule
+) on SentinelResourceName
+| extend Status = "Missing from DetectionCatalog — add to watchlist"
+| project
+    AnalyticRule = SentinelResourceName,
+    LastRun,
+    Status
+| order by AnalyticRule asc
+```
+
+Any rule returned by this query needs to be added to the DetectionCatalog. Share the results with the detection team — they add the Description and confirm the Table and Watchlists values.
+
+---
+
+### Step 4 — Ongoing Maintenance
+
+The DetectionCatalog is a living document. It needs to be updated when:
+
+- A new AB-series detection is created — detection team adds it
+- A detection is modified to query different tables — detection team updates the Table field
+- A detection is retired — row is removed or marked as decommissioned
+- A new watchlist is created and referenced by a detection — detection team updates the Watchlists field
+
+**The maintenance process:**
+1. Detection team creates or modifies a detection
+2. They update the DetectionCatalog CSV and re-upload to Sentinel
+3. Platform team runs the gap detection query to confirm nothing is missing
+4. GetEnrichedInventory function automatically reflects the updated catalog in the workbook
+
+**Frequency:** Run the gap detection query after every detection team release cycle. At minimum run it monthly alongside the data source audit review.
+
+---
+
+### How DetectionCatalog Connects to DataSourceInventory
+
+The GetEnrichedInventory KQL function joins these two watchlists on the Table field. The result automatically populates detection counts per data source in the workbook without any manual entry in DataSourceInventory.
+
+```kql
+// Simplified join — how the function works
+let inventory = _GetWatchlist('DataSourceInventory')
+| extend LastSeen = todatetime(LastSeen);
+let detections = _GetWatchlist('DetectionCatalog')
+| mv-expand Tables = split(Table, ",")
+| extend TableName = trim(" ", tostring(Tables))
+| summarize
+    DetectionCount = count(),
+    DetectionList = make_set(AnalyticRule)
+    by TableName;
+inventory
+| join kind=leftouter detections on $left.Table == $right.TableName
+| extend DetectionCount = coalesce(DetectionCount, 0)
+| extend HasCoverage = DetectionCount > 0
+```
+
+Sources with DetectionCount = 0 are immediately visible as coverage gaps. This drives the gap analysis section of the workbook and feeds the detection value conversation in client reviews.
