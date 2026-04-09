@@ -481,3 +481,40 @@ Announced at RSAC 2026 — custom security graphs using data from Sentinel data 
 ---
 
 *This document is the living map of the entire program. It is updated whenever new decisions are made, new ideas are locked in, or existing files need revision. It is the first document to read when returning to this project after any break.*
+
+---
+
+## Session 3 Updates — April 2026
+
+### Files Updated This Session
+
+| File | What Changed |
+|---|---|
+| `02-data-sources/data-source-audit-runbook.md` | Final column set locked — Origin and Transport replace Vendor and Source. Status plain text. Detections AB numbers only. Full approved value lists documented. Pre-populated reference expanded to 40+ tables. |
+| `resources/table-reference/README.md` | Template updated with Origin and Transport fields replacing Vendor. Approved values reference added. |
+| `resources/table-reference/SecurityEvent.md` | Quick reference updated with Origin and Transport. Vendor removed. |
+| `01-baseline/license-entitlement-review.md` | New file — documents client license tier and what capabilities that unlocks |
+
+### Final Locked Column Set — Tab 1
+
+```
+Table, Status, LastSeen_UTC, DaysSinceLastLog, LogSource,
+Origin, Transport, Category, Purpose, SilentDet, Detections, Notes
+```
+
+### Key Decisions Made This Session
+- Origin and Transport replace Vendor and Source — two fields answering two distinct questions
+- Status is plain text only — no emojis — watchlist compatible
+- Detections field is AB numbers only — no names
+- Flag status reserved for automation pipeline — not used in manual audit
+- Type field eliminated — Origin and Transport together answer what Type was trying to answer
+- ASIM tables documented as Transport = ASIM Parser, Origin = Multiple Sources
+- SecurityEvent is single log source category — one row covers whole table
+- Tab 2 added for technical configuration reference — engineer facing only
+- Purpose stays in Tab 1 — workbook needs it to display human-readable row context
+
+### New Concepts Introduced This Session
+- ASIM — normalized schema tables fed by parsers from raw tables
+- Origin vs Transport — what generated the data vs how it got into Sentinel
+- Log source category vs individual device — one row per source type not per machine
+- License entitlement review — prerequisite before any baseline or audit work
