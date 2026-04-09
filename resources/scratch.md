@@ -165,3 +165,133 @@ Usage
     DailyVol,
     TotalGB_30Days = TotalGB
 | order by TotalGB_30Days desc
+
+----------------SCRATCH
+
+## Multi-Source Table Investigation Queries
+
+Run each query below for tables that may have multiple log sources.
+Document results in the spreadsheet — one row per distinct source type.
+
+---
+
+### AzureDiagnostics
+```kql
+AzureDiagnostics
+| where TimeGenerated > ago(30d)
+| summarize
+    Count = count(),
+    LastSeen = max(TimeGenerated)
+    by ResourceType, ResourceProvider
+| order by Count desc
+```
+
+### AzureMetrics
+```kql
+AzureMetrics
+| where TimeGenerated > ago(30d)
+| summarize
+    Count = count(),
+    LastSeen = max(TimeGenerated)
+    by ResourceType, ResourceProvider, Namespace
+| order by Count desc
+```
+
+### DNSQueryLogs
+```kql
+DNSQueryLogs
+| where TimeGenerated > ago(30d)
+| summarize
+    Count = count(),
+    LastSeen = max(TimeGenerated)
+    by Resource, ResourceGroup
+| order by Count desc
+```
+
+### ThreatIntelIndicators
+```kql
+ThreatIntelIndicators
+| where TimeGenerated > ago(30d)
+| summarize
+    Count = count(),
+    LastSeen = max(TimeGenerated)
+    by SourceSystem
+| order by Count desc
+```
+
+### ThreatIntelObjects
+```kql
+ThreatIntelObjects
+| where TimeGenerated > ago(30d)
+| summarize
+    Count = count(),
+    LastSeen = max(TimeGenerated)
+    by SourceSystem
+| order by Count desc
+```
+
+### ASimAuditEventLogs
+```kql
+ASimAuditEventLogs
+| where TimeGenerated > ago(30d)
+| summarize
+    Count = count(),
+    LastSeen = max(TimeGenerated)
+    by EventVendor, EventProduct
+| order by Count desc
+```
+
+### ASimNetworkSessionLogs
+```kql
+ASimNetworkSessionLogs
+| where TimeGenerated > ago(30d)
+| summarize
+    Count = count(),
+    LastSeen = max(TimeGenerated)
+    by EventVendor, EventProduct
+| order by Count desc
+```
+
+### ASimWebSessionLogs
+```kql
+ASimWebSessionLogs
+| where TimeGenerated > ago(30d)
+| summarize
+    Count = count(),
+    LastSeen = max(TimeGenerated)
+    by EventVendor, EventProduct
+| order by Count desc
+```
+
+### Operation
+```kql
+Operation
+| where TimeGenerated > ago(30d)
+| summarize
+    Count = count(),
+    LastSeen = max(TimeGenerated)
+    by OperationCategory, Solution
+| order by Count desc
+```
+
+### Salesforce_ListViewEvent
+```kql
+Salesforce_ListViewEvent
+| where TimeGenerated > ago(30d)
+| summarize
+    Count = count(),
+    LastSeen = max(TimeGenerated)
+    by OrganizationId
+| order by Count desc
+```
+
+### Salesforce_LoginEvent
+```kql
+Salesforce_LoginEvent
+| where TimeGenerated > ago(30d)
+| summarize
+    Count = count(),
+    LastSeen = max(TimeGenerated)
+    by OrganizationId
+| order by Count desc
+```
