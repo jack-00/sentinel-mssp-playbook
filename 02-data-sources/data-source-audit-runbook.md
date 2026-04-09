@@ -836,41 +836,40 @@ With the DetectionCatalog:
 
 ---
 
-### Step 1 — Generate the Initial Skeleton via KQL
+### Step 1 — Generate the Initial Skeleton
 
-Run this query in the Logs blade to produce a skeleton CSV of all AB-series rules that have run. This gives you a starting point with rule names pre-populated. The detection team then fills in Description for each row.
+The DetectionCatalog must be filled in manually. There is no KQL query that can reliably return all AB-series rules including disabled ones — KQL only sees rules that have executed. The Python script from the detection team is the authoritative source for the final version. For now use this query to generate a template with the correct column structure and fill it in manually.
 
 ```kql
 // ============================================================
-// DETECTION CATALOG SKELETON — Run once to generate starter CSV
-// Returns all AB-series rules that have executed
-// Note: disabled rules will not appear — see gap detection below
+// DETECTION CATALOG — Template row
+// Always returns one row with the correct column headers
+// Export as CSV then duplicate the row for each detection
+// Fill in manually — do not leave [Manual] placeholder in any cell
 // ============================================================
-SentinelHealth
-| where SentinelResourceType == "Analytics Rule"
-| where SentinelResourceName matches regex @"^AB\d+"
-| summarize LastRun = max(TimeGenerated)
-    by SentinelResourceName
-| extend AnalyticRule =  SentinelResourceName
-| extend Table =         "[Manual] — exact table names comma separated"
-| extend Description =   "[Manual] — plain English what does this detection catch"
-| extend Watchlists =    "[Manual] — watchlist names comma separated or None"
-| project
-    AnalyticRule,
-    Table,
-    Description,
-    Watchlists
-| order by AnalyticRule asc
+print
+    AnalyticRule = "[Manual] — AB##### - Detection name",
+    Table =        "[Manual] — exact table names comma separated",
+    Description =  "[Manual] — plain English what does this catch",
+    Watchlists =   "[Manual] — watchlist names comma separated or None"
 ```
 
-Export this as CSV. Open in Excel. Format as Excel Table with Ctrl+T. Save as:
+**How to use this:**
+1. Run the query — it returns one template row with the four column headers
+2. Export as CSV
+3. Open in Excel — format as Excel Table with Ctrl+T
+4. Add one row per AB-series detection — fill in all four fields
+5. Include both standard detections AND silent log source detections in the same watchlist
+6. Save as:
 ```
 [ClientName]-DetectionCatalog-[YYYY-MM-DD].xlsx
 ```
+7. Upload to SharePoint before uploading as a watchlist
 
-Upload to SharePoint before filling in any manual fields.
+**On silent log source detections:**
+All SLD-tagged detections go in this same watchlist alongside standard detections. The AnalyticRule field value makes the type clear — `AB00012 - SLD - SignInLogs Silence` is immediately distinguishable from `AB00034 - Impossible Travel Sign-in`. The workbook and GetEnrichedInventory function use the SLD tag in the name to separate them when needed.
 
-**Important limitation:** This query only returns rules that have run at least once. Disabled rules and newly created rules that have not yet executed will not appear. Use the gap detection query below to find what is missing.
+**Important:** This is a manual process for now. When the detection team delivers their Python script output use that as the authoritative version. Compare the two — any discrepancies in Table values need to be resolved with the detection team before uploading as the final watchlist.
 
 ---
 
