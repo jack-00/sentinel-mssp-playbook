@@ -46,6 +46,51 @@ A log source is not every individual machine or device. It is the category of th
 
 ---
 
+## Log Source Inclusion Criteria
+
+Not every source within a shared table deserves its own row in the watchlist. Documenting everything you find in a breakout query creates noise, adds maintenance burden, and makes the workbook harder to read — with no security return.
+
+**The core rule:**
+
+> A log source gets its own row only if losing it would matter.
+
+Before creating a row for any source ask yourself — if this specific source went silent tomorrow would anyone care? Would a detection go blind? Would a capability degrade? Would a compliance obligation go unmet?
+
+If the answer is no to all of those — it does not need a row.
+
+**A source earns a row if it meets at least one of these criteria:**
+
+- A detection actively queries this source — losing it creates a blind spot
+- A capability depends on it — UEBA, Threat Intelligence, Fusion ML
+- A compliance obligation requires it to be continuously monitored
+- It has meaningful investigation or threat hunting value
+- It is a custom integration that could break silently without obvious indication
+
+**A source does not need a row if:**
+
+- No detection queries it
+- No compliance obligation requires it
+- It has no investigation value
+- Losing it would not change your detection coverage or create a gap
+- It is a metric or counter rather than a security event
+
+**Practical examples of what to skip:**
+
+- AzureDiagnostics from Logic Apps — workflows/runs/actions, workflows/runs/triggers. Unless you have detections querying Logic App diagnostic logs or a compliance requirement, a brief note in the Notes column of the relevant AzureActivity row is enough. No dedicated rows needed.
+- AzureDiagnostics NSG rule counters — NetworkSecurityGroupRuleCounter. This is a metric counter not a security event. Document NSG Flow Events if present but skip the counter.
+- CommonSecurityLog from a vendor sending only system health events — if those events feed no detection and have no hunting value, skip the row.
+- Syslog from a host sending only cron or kernel messages with no auth facility — low value, no detection dependency, skip it.
+
+**What to do with sources you are skipping:**
+
+Do not just ignore them. If a breakout query returns a source you are not documenting as its own row add a brief note to the parent table Notes column — for example "AzureDiagnostics also receives Logic App runtime logs — no detection dependency, not tracked." This tells future engineers that you saw it and made a deliberate decision not to track it rather than missing it.
+
+**The goal:**
+
+A lean, intentional watchlist where every row earns its place. When someone opens the workbook and sees a row they should be able to immediately understand why that source is being tracked and what breaks if it goes silent. If you cannot answer that question for a row it probably should not be there.
+
+---
+
 ## The Spreadsheet Structure
 
 The audit produces a two-tab Excel workbook. Understanding both tabs before you start is important.
