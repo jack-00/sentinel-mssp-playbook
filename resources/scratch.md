@@ -5,6 +5,96 @@
 > keeping permanently gets moved to the appropriate document in the repo.
 
 ---
+## DNS Investigation Queries
+
+DNS detection relies on multiple tables working together.
+Always check all of these when investigating DNS coverage.
+A detection that matches DNS queries against ThreatIntelIndicators
+needs both the DNS log table AND ThreatIntelIndicators healthy.
+
+### DNSQueryLogs — Check what DNS zones are writing here
+```kql
+DNSQueryLogs
+| where TimeGenerated > ago(30d)
+| summarize
+    LastSeen = max(TimeGenerated),
+    TotalRecords = count()
+    by ResourceGroup, Resource
+| extend DaysSinceLastLog = datetime_diff('day', now(), LastSeen)
+| extend Status = case(
+    DaysSinceLastLog <= 1, "Active",
+    DaysSinceLastLog <= 7, "Review",
+    DaysSinceLastLog > 7,  "Inactive",
+    "No Data"
+)
+| project
+    ResourceGroup,
+    Resource,
+    Status,
+    LastSeen,
+    DaysSinceLastLog,
+    TotalRecords
+| order by Resource asc
+```
+
+### CommonSecurityLog — Check if any vendor sends DNS category
+```kql
+CommonSecurityLog
+| where TimeGenerated > ago(30d)
+| where DeviceEventCategory contains "dns"
+    or Activity contains "dns"
+| summarize
+    LastSeen = max(TimeGenerated),
+    TotalRecords = count()
+    by DeviceVendor, DeviceProduct, DeviceEventCategory
+| extend DaysSinceLastLog = datetime_diff('day', now(), LastSeen)
+| extend Status = case(
+    DaysSinceLastLog <= 1, "Active",
+    DaysSinceLastLog <= 7, "Review",
+    DaysSinceLastLog > 7,  "Inactive",
+    "No Data"
+)
+| project
+    DeviceVendor,
+    DeviceProduct,
+    DeviceEventCategory,
+    Status,
+    LastSeen,
+    DaysSinceLastLog,
+    TotalRecords
+| order by DeviceVendor asc
+```
+
+### DeviceNetworkEvents — Check DNS query activity from endpoints
+```kql
+DeviceNetworkEvents
+| where TimeGenerated > ago(30d)
+| where ActionType == "DnsQueryResponse"
+    or ActionType == "DnsQuery"
+| summarize
+    LastSeen = max(TimeGenerated),
+    TotalRecords = count()
+    by ActionType
+| extend DaysSinceLastLog = datetime_diff('day', now(), LastSeen)
+| extend Status = case(
+    DaysSinceLastLog <= 1, "Active",
+    DaysSinceLastLog <= 7, "Review",
+    DaysSinceLastLog > 7,  "Inactive",
+    "No Data"
+)
+| project
+    ActionType,
+    Status,
+    LastSeen,
+    DaysSinceLastLog,
+    TotalRecords
+```
+
+### AzureDiagnostics — Azure Firewall DNS Proxy
+// Already covered by the AzureDiagnostics Level 2 query
+// Filter ResourceType == "AZUREFIREWALLS" and Category == "AzureFirewallDnsProxy"
+// See AzureDiagnostics section above
+---
 
 ## How to Use This File
 
