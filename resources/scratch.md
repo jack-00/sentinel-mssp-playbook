@@ -1,324 +1,618 @@
-# Multi-Source Table Investigation Queries
+# Scratch — Working Document
 
-> **Purpose:** Use these queries to deeply understand what is inside each
-> shared table before documenting it in the audit spreadsheet. Two levels
-> of investigation for every table:
->
-> **Level 1 — Who is writing to this table?**
-> Identifies distinct log sources within the table.
->
-> **Level 2 — What are they actually sending?**
-> Identifies the categories, event types, and content within each source.
->
-> The Azure Firewall lesson: knowing ResourceType = AZUREFIREWALLS is not
-> enough. You need to know which log categories are present —
-> ApplicationRule, NetworkRule, DnsProxy, ThreatIntelLog — because each
-> one represents completely different detection coverage. Going silent on
-> one while others remain active creates a blind spot that is invisible
-> at the surface level.
->
-> This principle applies everywhere. Always run both levels.
+> ⚠️ **This is a working scratchpad — not a finished document.**
+> Content here is temporary, experimental, or in progress. Anything worth
+> keeping permanently gets moved to the appropriate document in the repo.
 
 ---
 
-## AzureDiagnostics
+## How to Use This File
 
-### Level 1 — What resource types are writing here?
+Use this file during active audit and build sessions to:
+- Store queries you are testing before they are validated
+- Copy prompts to run in Copilot or the Logs blade
+- Capture observations and notes as you work through tables
+- Park ideas that come up mid-session before they get lost
+
+When something is proven and worth keeping permanently:
+- Validated queries → `resources/kql-snippets.md`
+- Table documentation → `resources/table-reference/`
+- Process updates → `02-data-sources/data-source-audit-runbook.md`
+- New ideas → `PROGRAM-MAP.md` ideas parking lot
+
+---
+
+## Key Decisions — Read Before Running Any Query
+
+**Raw datetime only — no format_datetime()**
+All queries output LastSeen as a raw datetime value.
+Do not add format_datetime() to any query.
+Excel handles display formatting — select the LastSeen column
+and format as YYYY-MM-DD HH:MM after export.
+Raw datetime keeps the value usable for all downstream
+workbook queries, snapshot pipeline, and change detection rules.
+
+**DaysSinceLastLog — spreadsheet only**
+Calculated in the query for audit reference.
+Do not include in the watchlist upload.
+The workbook calculates this live from LastSeen.
+
+**Status — audit snapshot only**
+Calculated in the query for audit reference.
+Stored in the watchlist as a record of status at audit time.
+The workbook recalculates Status live from workspace queries.
+Do not rely on watchlist Status in workbook logic.
+
+**todatetime() in workbook queries**
+Watchlists store all values as strings.
+Any workbook query that uses LastSeen from the watchlist
+must wrap it with todatetime():
+_GetWatchlist('DataSourceInventory')
+| extend LastSeen = todatetime(LastSeen)
+
+---
+
+## Copilot Prompt — Table Schema Analysis
+
+```
+I am conducting a data source audit of this Microsoft Sentinel workspace.
+
+I need your help analyzing the [TABLE_NAME] table. Please do the following:
+
+1. Pull the schema for the table and identify the most important fields
+   for security analysis — specifically fields that identify the source,
+   the type of event, the user account involved, and any fields that
+   distinguish different log sources writing to this table.
+
+2. Tell me which field I should use to identify individual sources
+   within this table so I can break out one row per log source.
+
+3. Identify which event types or categories are present in this table
+   over the last 30 days and how many records each one has.
+
+4. Tell me if there are any unusual or unexpected fields that might
+   indicate custom DCR transformations or non-standard configurations.
+
+The goal is to understand exactly what is in this table, who is writing
+to it, and what security value it provides so I can document it in our
+data source inventory.
+```
+
+---
+
+## Standard Queries
+
+### Main Table Inventory
+```kql
+// MAIN TABLE INVENTORY
+// FIRST RUN: Remove the time filter line entirely
+// SUBSEQUENT RUNS: Keep as-is
+search *
+| where TimeGenerated > ago(30d) // REMOVE ON FIRST RUN
+| summarize
+    LastSeen = max(TimeGenerated),
+    TotalRecords = count()
+    by $table
+| extend DaysSinceLastLog = datetime_diff('day', now(), LastSeen)
+| extend Status = case(
+    DaysSinceLastLog <= 1, "Active",
+    DaysSinceLastLog <= 7, "Review",
+    DaysSinceLastLog > 7,  "Inactive",
+    "No Data"
+)
+| extend LogSource =  "[Manual]"
+| extend Origin =     "[Manual]"
+| extend Transport =  "[Manual]"
+| extend Category =   "[Manual]"
+| extend Purpose =    "[Manual]"
+| extend SilentDet =  "[Manual]"
+| extend Detections = "[Manual]"
+| extend Notes =      "[Manual]"
+| project
+    Table = $table,
+    Status,
+    LastSeen,
+    DaysSinceLastLog,
+    LogSource,
+    Origin,
+    Transport,
+    Category,
+    Purpose,
+    SilentDet,
+    Detections,
+    Notes
+| order by Status asc, LastSeen desc
+```
+
+### Usage Volume
+```kql
+// USAGE VOLUME — Run separately
+// Keep export open alongside main spreadsheet
+// Add DailyVolume to Notes column for each table
+Usage
+| where TimeGenerated > ago(30d)
+| where IsBillable == true
+| summarize
+    TotalGB = round(sum(Quantity) / 1000, 3),
+    AvgDailyGB = round(sum(Quantity) / 1000 / 30, 4)
+    by DataType
+| extend DailyVolume = case(
+    AvgDailyGB == 0,    "< 1 MB",
+    AvgDailyGB < 0.001, "< 1 MB",
+    AvgDailyGB < 1,     strcat(tostring(round(AvgDailyGB * 1000, 1)), " MB"),
+    strcat(tostring(round(AvgDailyGB, 2)), " GB")
+)
+| project
+    Table = DataType,
+    DailyVolume,
+    TotalGB_30Days = TotalGB
+| order by TotalGB_30Days desc
+```
+
+---
+
+## Multi-Source Table Investigation
+
+### The Deep Dive Principle
+
+Identifying that a source writes to a shared table is only step one.
+Step two is understanding what that source is actually sending.
+
+The Azure Firewall example:
+- Surface level: ResourceType = AZUREFIREWALLS — one row
+- Deep level: four categories — ApplicationRule, NetworkRule,
+  DnsProxy, ThreatIntelLog — each completely different coverage
+- DnsProxy missing = DNS blind spot invisible at surface level
+
+Apply this to every shared table. Run Level 1 to find sources.
+Run Level 2 to find what each source sends. Decide rows based
+on whether categories serve different security purposes.
+
+---
+
+### Generic Category Breakout Query
+
+Use this template for any shared table after identifying
+the source field in Level 1. Replace the three variables:
+- TABLE_NAME — the actual table
+- SOURCE_FIELD — the field that identifies the source
+- SOURCE_VALUE — the specific source value to break out
+- CATEGORY_FIELD — the field that identifies event categories
+
+```kql
+// GENERIC CATEGORY BREAKOUT
+// Replace variables before running
+TABLE_NAME
+| where TimeGenerated > ago(30d)
+| where SOURCE_FIELD == "SOURCE_VALUE"
+| summarize
+    LastSeen = max(TimeGenerated),
+    TotalRecords = count()
+    by SOURCE_FIELD, CATEGORY_FIELD
+| extend DaysSinceLastLog = datetime_diff('day', now(), LastSeen)
+| extend Status = case(
+    DaysSinceLastLog <= 1, "Active",
+    DaysSinceLastLog <= 7, "Review",
+    DaysSinceLastLog > 7,  "Inactive",
+    "No Data"
+)
+| extend Table =     "TABLE_NAME"
+| extend Origin =    "[Manual]"
+| extend Transport = "[Manual]"
+| extend Category =  "[Manual]"
+| extend Purpose =   "[Manual]"
+| extend SilentDet = "[Manual]"
+| extend Detections ="[Manual]"
+| extend Notes =     strcat(SOURCE_FIELD, ": ", SOURCE_VALUE,
+                     " | ", CATEGORY_FIELD, ": ",
+                     tostring(column_ifexists(CATEGORY_FIELD, "")))
+| project
+    Table,
+    Status,
+    LastSeen,
+    DaysSinceLastLog,
+    Origin,
+    Transport,
+    Category,
+    Purpose,
+    SilentDet,
+    Detections,
+    Notes
+| order by CATEGORY_FIELD asc
+```
+
+The Notes field auto-populates with the source and category
+values so you always know what each row represents.
+
+---
+
+### AzureDiagnostics
+
+**Level 1 — What resource types are writing here?**
 ```kql
 AzureDiagnostics
 | where TimeGenerated > ago(30d)
 | summarize
-    Count = count(),
-    LastSeen = max(TimeGenerated)
+    LastSeen = max(TimeGenerated),
+    TotalRecords = count()
     by ResourceType, ResourceProvider
-| order by Count desc
+| extend DaysSinceLastLog = datetime_diff('day', now(), LastSeen)
+| extend Status = case(
+    DaysSinceLastLog <= 1, "Active",
+    DaysSinceLastLog <= 7, "Review",
+    DaysSinceLastLog > 7,  "Inactive",
+    "No Data"
+)
+| order by TotalRecords desc
 ```
 
-### Level 2 — What categories does each resource type send?
+**Level 2 — What categories does each resource type send?**
 ```kql
-// Run once per ResourceType found in Level 1
 // Replace AZUREFIREWALLS with your ResourceType
 AzureDiagnostics
 | where TimeGenerated > ago(30d)
 | where ResourceType == "AZUREFIREWALLS"
 | summarize
-    Count = count(),
-    LastSeen = max(TimeGenerated)
-    by Category
-| order by Count desc
+    LastSeen = max(TimeGenerated),
+    TotalRecords = count()
+    by ResourceType, Category
+| extend DaysSinceLastLog = datetime_diff('day', now(), LastSeen)
+| extend Status = case(
+    DaysSinceLastLog <= 1, "Active",
+    DaysSinceLastLog <= 7, "Review",
+    DaysSinceLastLog > 7,  "Inactive",
+    "No Data"
+)
+| extend Table =     "AzureDiagnostics"
+| extend Origin =    "Microsoft Azure"
+| extend Transport = "Diagnostic Setting"
+| extend Category =  "[Manual] — Firewall / Network / Cloud Infrastructure / Compliance and Audit / Other"
+| extend Purpose =   "[Manual] — What does this category help detect?"
+| extend SilentDet = "[Manual] — AB##### or Missing"
+| extend Detections ="[Manual] — AB#####, AB##### or None"
+| extend Notes =     strcat("ResourceType: ", ResourceType, " | Category: ", Category)
+| project
+    Table,
+    Status,
+    LastSeen,
+    DaysSinceLastLog,
+    Origin,
+    Transport,
+    Category,
+    Purpose,
+    SilentDet,
+    Detections,
+    Notes
+| order by Category asc
 ```
 
-### Known category breakdowns to look for:
-
-**AZUREFIREWALLS** — each category is different detection coverage:
-- AzureFirewallApplicationRule — layer 7 application traffic allow/deny
-- AzureFirewallNetworkRule — layer 3/4 network traffic allow/deny
-- AzureFirewallDnsProxy — DNS queries through firewall (only if DNS proxy enabled)
-- AzureFirewallThreatIntelLog — connections matching Microsoft TI indicators
-
-**VAULTS (Key Vault):**
-- AuditEvent — secret access, key operations, certificate events (HIGH VALUE)
-- AzurePolicyEvaluationDetails — policy compliance events
-
-**NETWORKSECURITYGROUPS:**
-- NetworkSecurityGroupEvent — rule change events
-- NetworkSecurityGroupRuleCounter — rule hit counters
-- NetworkSecurityGroupFlowEvent — actual flow logs (HIGH VALUE — requires NSG Flow Logs enabled)
-
-**WORKFLOWS (Logic Apps):**
-- WorkflowRuntime — covers runs, actions, and triggers
-
-### Level 3 — Check for specific resources within a category
+**Level 3 — Check specific resources within a category**
 ```kql
-// Find which specific resources are sending a category
-// Useful when you have many Key Vaults or Firewalls
+// Useful when multiple Key Vaults or Firewalls exist
 AzureDiagnostics
 | where TimeGenerated > ago(30d)
 | where ResourceType == "VAULTS"
 | where Category == "AuditEvent"
 | summarize
-    Count = count(),
-    LastSeen = max(TimeGenerated)
+    LastSeen = max(TimeGenerated),
+    TotalRecords = count()
     by Resource
-| order by Count desc
+| extend DaysSinceLastLog = datetime_diff('day', now(), LastSeen)
+| order by TotalRecords desc
 ```
 
-### Level 4 — Verify NSG Flow Logs are actually present
+**Level 4 — Verify NSG Flow Logs are actually present**
 ```kql
-// NSG Flow Logs require Network Watcher to be enabled
-// They are frequently missing even when NSG logging appears configured
+// NSG flow logs are frequently missing even when logging appears configured
 AzureDiagnostics
 | where TimeGenerated > ago(30d)
 | where ResourceType == "NETWORKSECURITYGROUPS"
 | where Category == "NetworkSecurityGroupFlowEvent"
-| summarize Count = count(), LastSeen = max(TimeGenerated)
+| summarize
+    LastSeen = max(TimeGenerated),
+    TotalRecords = count()
+// Zero results = flow logs not configured. Only rule events present.
 ```
-// If this returns zero — NSG flow logs are NOT configured
-// Only rule events are present — much lower detection value
+
+**Known categories by ResourceType:**
+
+AZUREFIREWALLS:
+- AzureFirewallApplicationRule — layer 7 allow/deny (HIGH VALUE)
+- AzureFirewallNetworkRule — layer 3/4 allow/deny (HIGH VALUE)
+- AzureFirewallDnsProxy — DNS queries via firewall (only if DNS proxy enabled)
+- AzureFirewallThreatIntelLog — TI indicator matches (HIGH VALUE)
+
+VAULTS:
+- AuditEvent — secret access, key operations (HIGH VALUE)
+- AzurePolicyEvaluationDetails — policy compliance
+
+NETWORKSECURITYGROUPS:
+- NetworkSecurityGroupEvent — rule changes
+- NetworkSecurityGroupRuleCounter — rule hit counters
+- NetworkSecurityGroupFlowEvent — actual flow logs (HIGH VALUE — often missing)
+
+WORKFLOWS:
+- WorkflowRuntime — covers runs, actions, triggers
 
 ---
 
-## AzureMetrics
+### AzureMetrics
 
-### Level 1 — What resource types are sending metrics?
+**Level 1 — What resource types are sending metrics?**
 ```kql
 AzureMetrics
 | where TimeGenerated > ago(30d)
 | summarize
-    Count = count(),
-    LastSeen = max(TimeGenerated)
+    LastSeen = max(TimeGenerated),
+    TotalRecords = count()
     by ResourceType, Namespace
-| order by Count desc
+| extend DaysSinceLastLog = datetime_diff('day', now(), LastSeen)
+| extend Status = case(
+    DaysSinceLastLog <= 1, "Active",
+    DaysSinceLastLog <= 7, "Review",
+    DaysSinceLastLog > 7,  "Inactive",
+    "No Data"
+)
+| order by TotalRecords desc
 ```
 
-### Level 2 — What metrics does each resource type send?
+**Level 2 — What metrics does each resource type send?**
 ```kql
-// Run once per ResourceType
+// Replace VAULTS with your ResourceType
 AzureMetrics
 | where TimeGenerated > ago(30d)
 | where ResourceType == "VAULTS"
 | summarize
-    Count = count(),
-    LastSeen = max(TimeGenerated)
-    by MetricName
-| order by Count desc
+    LastSeen = max(TimeGenerated),
+    TotalRecords = count()
+    by ResourceType, MetricName
+| extend DaysSinceLastLog = datetime_diff('day', now(), LastSeen)
+| extend Status = case(
+    DaysSinceLastLog <= 1, "Active",
+    DaysSinceLastLog <= 7, "Review",
+    DaysSinceLastLog > 7,  "Inactive",
+    "No Data"
+)
+| extend Table =     "AzureMetrics"
+| extend Origin =    "Microsoft Azure"
+| extend Transport = "Diagnostic Setting"
+| extend Category =  "[Manual]"
+| extend Purpose =   "[Manual]"
+| extend SilentDet = "[Manual]"
+| extend Detections ="[Manual]"
+| extend Notes =     strcat("ResourceType: ", ResourceType,
+                     " | Metric: ", MetricName)
+| project
+    Table,
+    Status,
+    LastSeen,
+    DaysSinceLastLog,
+    Origin,
+    Transport,
+    Category,
+    Purpose,
+    SilentDet,
+    Detections,
+    Notes
+| order by MetricName asc
 ```
-
-### Level 3 — Check for security-relevant metric anomalies
-```kql
-// Key Vault API hits — spikes may indicate enumeration or attack
-AzureMetrics
-| where TimeGenerated > ago(30d)
-| where ResourceType == "VAULTS"
-| where MetricName == "ServiceApiHit"
-| summarize
-    DailyHits = count()
-    by bin(TimeGenerated, 1d), Resource
-| order by TimeGenerated desc
-```
-
-### Notes on AzureMetrics security value:
-// Most metrics are operational not security-relevant
-// Exceptions worth noting:
-// - Key Vault ServiceApiHit — spikes can indicate enumeration
-// - Firewall health metrics — detect if firewall is degraded
-// - Storage availability — detect if storage is being DoS'd
-// - VM CPU spikes — detect cryptomining
-// Low priority for silent detection unless specific anomaly
-// detections are written against metrics data
 
 ---
 
-## CommonSecurityLog
+### CommonSecurityLog
 
-### Level 1 — What vendors and products are writing here?
+**Level 1 — What vendors and products are writing here?**
 ```kql
 CommonSecurityLog
 | where TimeGenerated > ago(30d)
 | summarize
-    Count = count(),
-    LastSeen = max(TimeGenerated)
+    LastSeen = max(TimeGenerated),
+    TotalRecords = count()
     by DeviceVendor, DeviceProduct
-| order by Count desc
+| extend DaysSinceLastLog = datetime_diff('day', now(), LastSeen)
+| extend Status = case(
+    DaysSinceLastLog <= 1, "Active",
+    DaysSinceLastLog <= 7, "Review",
+    DaysSinceLastLog > 7,  "Inactive",
+    "No Data"
+)
+| order by TotalRecords desc
 ```
 
-### Level 2 — What event categories does each vendor send?
+**Level 2 — What event categories does each vendor send?**
 ```kql
-// Run once per DeviceVendor
+// Replace Palo Alto Networks with your DeviceVendor
 CommonSecurityLog
 | where TimeGenerated > ago(30d)
 | where DeviceVendor == "Palo Alto Networks"
 | summarize
-    Count = count(),
-    LastSeen = max(TimeGenerated)
-    by DeviceEventCategory, Activity
-| order by Count desc
+    LastSeen = max(TimeGenerated),
+    TotalRecords = count()
+    by DeviceVendor, DeviceProduct, DeviceEventCategory
+| extend DaysSinceLastLog = datetime_diff('day', now(), LastSeen)
+| extend Status = case(
+    DaysSinceLastLog <= 1, "Active",
+    DaysSinceLastLog <= 7, "Review",
+    DaysSinceLastLog > 7,  "Inactive",
+    "No Data"
+)
+| extend Table =     "CommonSecurityLog"
+| extend Origin =    "[Manual] — Network Device or vendor name"
+| extend Transport = "CEF — AMA — DCR"
+| extend Category =  "[Manual] — Firewall / Network / Other"
+| extend Purpose =   "[Manual] — What does this category help detect?"
+| extend SilentDet = "[Manual] — AB##### or Missing"
+| extend Detections ="[Manual] — AB#####, AB##### or None"
+| extend Notes =     strcat("Vendor: ", DeviceVendor,
+                     " | Product: ", DeviceProduct,
+                     " | Category: ", DeviceEventCategory)
+| project
+    Table,
+    Status,
+    LastSeen,
+    DaysSinceLastLog,
+    Origin,
+    Transport,
+    Category,
+    Purpose,
+    SilentDet,
+    Detections,
+    Notes
+| order by DeviceEventCategory asc
 ```
 
-### Known category breakdowns to look for:
-
-**Palo Alto Networks:**
-- TRAFFIC — network traffic logs (allow/deny)
-- THREAT — threat detections (malware, C2, exploits)
-- URL — URL filtering logs
-- WILDFIRE — WildFire sandbox results
-- SYSTEM — firewall system events
-// Each category is different detection coverage
-// THREAT and WILDFIRE are highest security value
-// TRAFFIC is high volume — verify it is not creating noise
-
-**Fortinet FortiGate:**
-- utm — unified threat management events
-- traffic — network traffic logs
-- event — system and admin events
-- virus — AV detections
-// utm and virus are highest security value
-
-### Level 3 — Check for allow vs deny distribution
+**Level 3 — Check allow vs deny distribution**
 ```kql
-// Understanding allow vs deny ratio helps identify noise vs signal
 CommonSecurityLog
 | where TimeGenerated > ago(7d)
 | where DeviceVendor == "Palo Alto Networks"
-| where DeviceEventCategory == "TRAFFIC"
 | summarize Count = count() by DeviceAction
 | order by Count desc
 ```
 
-### Level 4 — Check source and destination distribution
-```kql
-// Identify top talkers — helps understand what this firewall is seeing
-CommonSecurityLog
-| where TimeGenerated > ago(7d)
-| where DeviceVendor == "Palo Alto Networks"
-| where DeviceEventCategory == "THREAT"
-| summarize Count = count() by SourceIP, DestinationIP, Activity
-| order by Count desc
-| take 20
-```
-
 ---
 
-## Syslog
+### Syslog
 
-### Level 1 — What hosts are writing here?
+**Level 1 — What hosts are writing here?**
 ```kql
 Syslog
 | where TimeGenerated > ago(30d)
 | summarize
-    Count = count(),
-    LastSeen = max(TimeGenerated)
+    LastSeen = max(TimeGenerated),
+    TotalRecords = count()
     by HostName
-| order by Count desc
+| extend DaysSinceLastLog = datetime_diff('day', now(), LastSeen)
+| extend Status = case(
+    DaysSinceLastLog <= 1, "Active",
+    DaysSinceLastLog <= 7, "Review",
+    DaysSinceLastLog > 7,  "Inactive",
+    "No Data"
+)
+| order by TotalRecords desc
 ```
 
-### Level 2 — What facilities and severities does each host send?
+**Level 2 — What facilities does each host send?**
 ```kql
-// Run once per host
-// Facility tells you what component generated the log
+// Replace HOSTNAME with your host
 Syslog
 | where TimeGenerated > ago(30d)
 | where HostName == "HOSTNAME"
 | summarize
-    Count = count(),
-    LastSeen = max(TimeGenerated)
-    by Facility, SeverityLevel
-| order by Count desc
+    LastSeen = max(TimeGenerated),
+    TotalRecords = count()
+    by HostName, Facility, SeverityLevel
+| extend DaysSinceLastLog = datetime_diff('day', now(), LastSeen)
+| extend Status = case(
+    DaysSinceLastLog <= 1, "Active",
+    DaysSinceLastLog <= 7, "Review",
+    DaysSinceLastLog > 7,  "Inactive",
+    "No Data"
+)
+| extend Table =     "Syslog"
+| extend Origin =    "[Manual]"
+| extend Transport = "AMA — DCR"
+| extend Category =  "[Manual] — Endpoint / Network / Identity / Other"
+| extend Purpose =   "[Manual] — What does this host log help detect?"
+| extend SilentDet = "[Manual] — AB##### or Missing"
+| extend Detections ="[Manual] — AB#####, AB##### or None"
+| extend Notes =     strcat("Host: ", HostName,
+                     " | Facility: ", Facility,
+                     " | Severity: ", SeverityLevel)
+| project
+    Table,
+    Status,
+    LastSeen,
+    DaysSinceLastLog,
+    Origin,
+    Transport,
+    Category,
+    Purpose,
+    SilentDet,
+    Detections,
+    Notes
+| order by Facility asc
 ```
 
-### Known Syslog facilities and their security value:
-
-| Facility | What It Is | Security Value |
-|---|---|---|
-| auth / authpriv | Authentication events | HIGH — login, sudo, PAM |
-| daemon | Background service events | MEDIUM — service starts/stops |
-| kern | Kernel messages | MEDIUM — driver issues, OOM |
-| syslog | Syslog daemon itself | LOW — operational |
-| cron | Scheduled task execution | MEDIUM — persistence detection |
-| local0-local7 | Custom application logs | VARIES — depends on config |
-| user | User-level messages | LOW-MEDIUM |
-| mail | Mail system | LOW unless mail server |
-
-### Level 3 — Check authentication events specifically
+**Level 3 — Verify auth facility is present**
 ```kql
-// Auth facility logs are the highest value in Syslog
-// Verify they are present for hosts that should have them
+// Auth/authpriv is the highest value Syslog facility
+// Verify it is present for hosts that should have it
 Syslog
 | where TimeGenerated > ago(24h)
 | where HostName == "HOSTNAME"
-| where Facility == "auth" or Facility == "authpriv"
-| summarize Count = count(), LastSeen = max(TimeGenerated)
-```
-// If zero — authentication events are not being collected
-// This is a significant gap for Linux machines especially DCs
-
-### Level 4 — Check for CEF forwarder vs Linux host
-```kql
-// Some Syslog hosts are CEF forwarders not Linux machines
-// CEF forwarders should write to CommonSecurityLog not Syslog
-// If you see a forwarder VM writing to Syslog investigate
-Syslog
-| where TimeGenerated > ago(7d)
-| where HostName == "HOSTNAME"
+| where Facility in ("auth", "authpriv")
 | summarize
-    Count = count(),
-    SampleMessages = make_set(SyslogMessage, 5)
-    by ProcessName
-| order by Count desc
+    LastSeen = max(TimeGenerated),
+    Count = count()
+// Zero results = authentication events not being collected
 ```
 
 ---
 
-## ThreatIntelIndicators
+### ThreatIntelIndicators
 
-### Level 1 — What feeds are writing here?
+**Level 1 — What feeds are writing here?**
 ```kql
 ThreatIntelIndicators
 | where TimeGenerated > ago(30d)
 | summarize
-    Count = count(),
-    LastSeen = max(TimeGenerated)
+    LastSeen = max(TimeGenerated),
+    TotalRecords = count()
     by SourceSystem
-| order by Count desc
+| extend DaysSinceLastLog = datetime_diff('day', now(), LastSeen)
+| extend Status = case(
+    DaysSinceLastLog <= 1, "Active",
+    DaysSinceLastLog <= 7, "Review",
+    DaysSinceLastLog > 7,  "Inactive",
+    "No Data"
+)
+| order by TotalRecords desc
 ```
 
-### Level 2 — What indicator types does each feed provide?
+**Level 2 — What indicator types does each feed provide?**
 ```kql
-// Run once per SourceSystem
+// Replace Microsoft Sentinel with your SourceSystem
 ThreatIntelIndicators
 | where TimeGenerated > ago(30d)
 | where SourceSystem == "Microsoft Sentinel"
 | summarize
-    Count = count(),
-    LastSeen = max(TimeGenerated)
-    by IndicatorType
-| order by Count desc
+    LastSeen = max(TimeGenerated),
+    TotalRecords = count()
+    by SourceSystem, IndicatorType
+| extend DaysSinceLastLog = datetime_diff('day', now(), LastSeen)
+| extend Status = case(
+    DaysSinceLastLog <= 1, "Active",
+    DaysSinceLastLog <= 7, "Review",
+    DaysSinceLastLog > 7,  "Inactive",
+    "No Data"
+)
+| extend Table =     "ThreatIntelIndicators"
+| extend Origin =    "Microsoft Sentinel"
+| extend Transport = "TAXII — Polling"
+| extend Category =  "Threat Intelligence"
+| extend Purpose =   "[Manual] — What does this feed provide?"
+| extend SilentDet = "[Manual] — AB##### or Missing"
+| extend Detections ="[Manual] — AB#####, AB##### or None"
+| extend Notes =     strcat("Feed: ", SourceSystem,
+                     " | Type: ", IndicatorType)
+| project
+    Table,
+    Status,
+    LastSeen,
+    DaysSinceLastLog,
+    Origin,
+    Transport,
+    Category,
+    Purpose,
+    SilentDet,
+    Detections,
+    Notes
+| order by IndicatorType asc
 ```
 
-### Level 3 — Check indicator freshness per feed
+**Level 3 — Check indicator freshness**
 ```kql
-// Stale indicators reduce TI effectiveness significantly
-// Indicators older than 30 days are low confidence
 ThreatIntelIndicators
 | where TimeGenerated > ago(30d)
 | summarize
@@ -330,99 +624,84 @@ ThreatIntelIndicators
     by SourceSystem
 ```
 
-### Level 4 — Check indicator type coverage
+**Level 4 — Verify legacy table status**
 ```kql
-// Different indicator types cover different detection scenarios
-// IP only = network detection only
-// URL + Domain = web and DNS detection
-// FileHash = endpoint detection
-// Full coverage = all types present
-ThreatIntelIndicators
-| where TimeGenerated > ago(30d)
-| where ExpirationDateTime > now()
-| summarize Count = count() by IndicatorType, SourceSystem
-| order by SourceSystem asc, Count desc
-```
-
-### Level 5 — Verify TI analytics rules are referencing correct tables
-```kql
-// ThreatIntelligenceIndicator is the LEGACY table
-// ThreatIntelIndicators is the CURRENT table
-// Rules referencing the legacy table still work but should be updated
+// ThreatIntelligenceIndicator is LEGACY
+// ThreatIntelIndicators is CURRENT
 // Check if legacy table still has data
+// Rules referencing legacy table should be updated
 ThreatIntelligenceIndicator
 | where TimeGenerated > ago(7d)
-| summarize Count = count(), LastSeen = max(TimeGenerated)
+| summarize
+    LastSeen = max(TimeGenerated),
+    Count = count()
 ```
 
 ---
 
-## ThreatIntelObjects
+### ThreatIntelObjects
 
-### Level 1 — What feeds are writing STIX objects here?
+**Level 1 — What feeds and object types are present?**
 ```kql
 ThreatIntelObjects
 | where TimeGenerated > ago(30d)
 | summarize
-    Count = count(),
-    LastSeen = max(TimeGenerated)
-    by SourceSystem
-| order by Count desc
-```
-
-### Level 2 — What STIX object types are present?
-```kql
-// STIX 2.1 supports rich object types beyond just indicators
-// Threat actors, attack patterns, campaigns, relationships
-ThreatIntelObjects
-| where TimeGenerated > ago(30d)
-| summarize
-    Count = count(),
-    LastSeen = max(TimeGenerated)
-    by ObjectType, SourceSystem
-| order by Count desc
-```
-
-### Level 3 — Check relationship objects
-```kql
-// Relationship objects connect threat actors to techniques
-// High value for understanding adversary TTPs
-ThreatIntelObjects
-| where TimeGenerated > ago(30d)
-| where ObjectType == "relationship"
-| summarize Count = count() by SourceSystem
+    LastSeen = max(TimeGenerated),
+    TotalRecords = count()
+    by SourceSystem, ObjectType
+| extend DaysSinceLastLog = datetime_diff('day', now(), LastSeen)
+| extend Status = case(
+    DaysSinceLastLog <= 1, "Active",
+    DaysSinceLastLog <= 7, "Review",
+    DaysSinceLastLog > 7,  "Inactive",
+    "No Data"
+)
+| order by TotalRecords desc
 ```
 
 ---
 
-## ASimNetworkSessionLogs
+### ASimNetworkSessionLogs
 
-### Level 1 — What sources are normalized into this table?
+**Level 1 — What sources are normalized here?**
 ```kql
 ASimNetworkSessionLogs
 | where TimeGenerated > ago(30d)
 | summarize
-    Count = count(),
-    LastSeen = max(TimeGenerated)
+    LastSeen = max(TimeGenerated),
+    TotalRecords = count()
     by EventVendor, EventProduct
-| order by Count desc
+| extend DaysSinceLastLog = datetime_diff('day', now(), LastSeen)
+| extend Status = case(
+    DaysSinceLastLog <= 1, "Active",
+    DaysSinceLastLog <= 7, "Review",
+    DaysSinceLastLog > 7,  "Inactive",
+    "No Data"
+)
+| order by TotalRecords desc
 ```
 
-### Level 2 — What event types and actions are present?
+**Level 2 — What event types are present?**
 ```kql
 ASimNetworkSessionLogs
 | where TimeGenerated > ago(30d)
 | summarize
-    Count = count(),
-    LastSeen = max(TimeGenerated)
+    LastSeen = max(TimeGenerated),
+    TotalRecords = count()
     by EventVendor, EventType, DvcAction
-| order by Count desc
+| extend DaysSinceLastLog = datetime_diff('day', now(), LastSeen)
+| extend Status = case(
+    DaysSinceLastLog <= 1, "Active",
+    DaysSinceLastLog <= 7, "Review",
+    DaysSinceLastLog > 7,  "Inactive",
+    "No Data"
+)
+| order by EventVendor asc
 ```
 
-### Level 3 — Verify normalization quality
+**Level 3 — Verify normalization quality**
 ```kql
-// Check that key ASIM fields are populated
-// Empty fields indicate parser issues
+// Low coverage = parser misconfiguration
 ASimNetworkSessionLogs
 | where TimeGenerated > ago(24h)
 | summarize
@@ -431,111 +710,113 @@ ASimNetworkSessionLogs
     HasDstIP = countif(isnotempty(DstIpAddr)),
     HasDstPort = countif(isnotempty(DstPortNumber)),
     HasAction = countif(isnotempty(DvcAction))
-| extend
-    SrcIPCoverage = round(todouble(HasSrcIP) / TotalRecords * 100, 1),
-    DstIPCoverage = round(todouble(HasDstIP) / TotalRecords * 100, 1)
+| extend SrcIPCoverage = round(todouble(HasSrcIP) / TotalRecords * 100, 1)
+| extend DstIPCoverage = round(todouble(HasDstIP) / TotalRecords * 100, 1)
 ```
-// Low coverage percentages indicate parser misconfiguration
 
 ---
 
-## ASimAuditEventLogs
+### ASimAuditEventLogs
 
-### Level 1 — What sources are normalized here?
+**Level 1 — What sources are normalized here?**
 ```kql
 ASimAuditEventLogs
 | where TimeGenerated > ago(30d)
 | summarize
-    Count = count(),
-    LastSeen = max(TimeGenerated)
+    LastSeen = max(TimeGenerated),
+    TotalRecords = count()
     by EventVendor, EventProduct
-| order by Count desc
+| extend DaysSinceLastLog = datetime_diff('day', now(), LastSeen)
+| extend Status = case(
+    DaysSinceLastLog <= 1, "Active",
+    DaysSinceLastLog <= 7, "Review",
+    DaysSinceLastLog > 7,  "Inactive",
+    "No Data"
+)
+| order by TotalRecords desc
 ```
 
-### Level 2 — What audit event types are present?
+**Level 2 — What audit event types are present?**
 ```kql
 ASimAuditEventLogs
 | where TimeGenerated > ago(30d)
 | summarize
-    Count = count(),
-    LastSeen = max(TimeGenerated)
+    LastSeen = max(TimeGenerated),
+    TotalRecords = count()
     by EventVendor, EventType, EventResult
-| order by Count desc
-```
-
-### Level 3 — Verify normalization quality
-```kql
-ASimAuditEventLogs
-| where TimeGenerated > ago(24h)
-| summarize
-    TotalRecords = count(),
-    HasActorUsername = countif(isnotempty(ActorUsername)),
-    HasObject = countif(isnotempty(Object)),
-    HasEventResult = countif(isnotempty(EventResult))
-| extend ActorCoverage = round(todouble(HasActorUsername) / TotalRecords * 100, 1)
+| extend DaysSinceLastLog = datetime_diff('day', now(), LastSeen)
+| order by EventVendor asc
 ```
 
 ---
 
-## ASimWebSessionLogs
+### ASimWebSessionLogs
 
-### Level 1 — What sources are normalized here?
+**Level 1 — What sources are normalized here?**
 ```kql
 ASimWebSessionLogs
 | where TimeGenerated > ago(30d)
 | summarize
-    Count = count(),
-    LastSeen = max(TimeGenerated)
+    LastSeen = max(TimeGenerated),
+    TotalRecords = count()
     by EventVendor, EventProduct
-| order by Count desc
+| extend DaysSinceLastLog = datetime_diff('day', now(), LastSeen)
+| extend Status = case(
+    DaysSinceLastLog <= 1, "Active",
+    DaysSinceLastLog <= 7, "Review",
+    DaysSinceLastLog > 7,  "Inactive",
+    "No Data"
+)
+| order by TotalRecords desc
 ```
 
-### Level 2 — What web session types are present?
+**Level 2 — What web session types and actions are present?**
 ```kql
 ASimWebSessionLogs
 | where TimeGenerated > ago(30d)
 | summarize
-    Count = count(),
-    LastSeen = max(TimeGenerated)
-    by EventVendor, EventType, DvcAction, HttpStatusCode
-| order by Count desc
-```
-
-### Level 3 — Check for blocked vs allowed traffic
-```kql
-ASimWebSessionLogs
-| where TimeGenerated > ago(7d)
-| summarize Count = count() by DvcAction
-| order by Count desc
+    LastSeen = max(TimeGenerated),
+    TotalRecords = count()
+    by EventVendor, EventType, DvcAction
+| extend DaysSinceLastLog = datetime_diff('day', now(), LastSeen)
+| order by EventVendor asc
 ```
 
 ---
 
-## SecurityEvent
+### SecurityEvent
 
-### Level 1 — What machines are writing here?
+**Level 1 — What machines are writing here?**
 ```kql
 SecurityEvent
 | where TimeGenerated > ago(30d)
 | summarize
-    Count = count(),
-    LastSeen = max(TimeGenerated)
-    by Computer
-| order by Count desc
+    LastSeen = max(TimeGenerated),
+    TotalRecords = count(),
+    MachineCount = dcount(Computer)
+    by Type
+| extend DaysSinceLastLog = datetime_diff('day', now(), LastSeen)
+| extend Status = case(
+    DaysSinceLastLog <= 1, "Active",
+    DaysSinceLastLog <= 7, "Review",
+    DaysSinceLastLog > 7,  "Inactive",
+    "No Data"
+)
 ```
 
-### Level 2 — What Event IDs are present?
+**Level 2 — What Event IDs are present?**
 ```kql
 SecurityEvent
 | where TimeGenerated > ago(30d)
-| summarize Count = count() by EventID
+| summarize
+    LastSeen = max(TimeGenerated),
+    Count = count()
+    by EventID
 | order by Count desc
 ```
 
-### Level 3 — Check critical Event ID coverage
+**Level 3 — Check critical Event ID coverage**
 ```kql
-// These Event IDs should be present in any active Windows environment
-// Missing IDs indicate DCR or audit policy gaps
 let critical_ids = datatable(EventID:int, Description:string)
 [
     4624, "Successful logon",
@@ -547,7 +828,6 @@ let critical_ids = datatable(EventID:int, Description:string)
     4720, "User account created",
     4728, "Member added to global group",
     4732, "Member added to local group",
-    4756, "Member added to universal group",
     4740, "Account locked out",
     4771, "Kerberos pre-auth failed",
     4776, "NTLM credential validation",
@@ -559,124 +839,105 @@ let present_ids = SecurityEvent
     | summarize by EventID;
 critical_ids
 | join kind=leftanti present_ids on EventID
-| project
-    EventID,
-    Description,
+| project EventID, Description,
     Status = "MISSING — not being collected"
 ```
-// Any row returned here is a gap in your Windows security coverage
 
-### Level 4 — Check if process creation has command line
+**Level 4 — Check command line coverage for 4688**
 ```kql
-// 4688 without CommandLine is significantly less valuable
-// CommandLine requires audit policy to be configured in Windows
+// Zero CommandLineCoverage = process auditing on but
+// CommandLine logging not configured in Windows audit policy
 SecurityEvent
 | where TimeGenerated > ago(24h)
 | where EventID == 4688
 | summarize
     TotalProcessCreation = count(),
     HasCommandLine = countif(isnotempty(CommandLine))
-| extend CommandLineCoverage = round(todouble(HasCommandLine) / TotalProcessCreation * 100, 1)
+| extend CommandLineCoverage =
+    round(todouble(HasCommandLine) / TotalProcessCreation * 100, 1)
 ```
-// If CommandLineCoverage is 0% — process creation auditing is
-// enabled but CommandLine logging is not configured in Windows
-// audit policy. Significant detection gap.
 
 ---
 
-## Operation
+### Operation
 
-### Level 1 — What operation categories are present?
+**Level 1 — What operation categories are present?**
 ```kql
 Operation
 | where TimeGenerated > ago(30d)
 | summarize
-    Count = count(),
-    LastSeen = max(TimeGenerated)
+    LastSeen = max(TimeGenerated),
+    TotalRecords = count()
     by OperationCategory, Solution
-| order by Count desc
+| extend DaysSinceLastLog = datetime_diff('day', now(), LastSeen)
+| order by TotalRecords desc
 ```
 
-### Level 2 — Check for error patterns
+**Level 2 — Check for errors**
 ```kql
-// Operation table contains workspace errors and warnings
-// Recurring errors may indicate ingestion or agent problems
 Operation
 | where TimeGenerated > ago(7d)
 | where OperationStatus != "Succeeded"
 | summarize
-    Count = count(),
-    LastSeen = max(TimeGenerated)
+    LastSeen = max(TimeGenerated),
+    Count = count()
     by OperationCategory, Detail
 | order by Count desc
 ```
 
-### Notes on Operation:
-// Low security value but useful for troubleshooting
-// Errors here often explain why other tables have gaps
-// Check when a table suddenly goes inactive
-
 ---
 
-## Salesforce_ListViewEvent and Salesforce_LoginEvent
+### Salesforce Tables
 
-### Level 1 — Check if multiple Salesforce orgs write here
+**Level 1 — Check if multiple orgs write here**
 ```kql
 // Replace table name as needed
 Salesforce_ListViewEvent
 | where TimeGenerated > ago(30d)
 | summarize
-    Count = count(),
-    LastSeen = max(TimeGenerated)
+    LastSeen = max(TimeGenerated),
+    TotalRecords = count()
     by OrganizationId
-| order by Count desc
+| extend DaysSinceLastLog = datetime_diff('day', now(), LastSeen)
+| order by TotalRecords desc
 ```
 
-### Level 2 — Check event types within the table
+**Level 2 — Check login types and status**
 ```kql
 Salesforce_LoginEvent
 | where TimeGenerated > ago(30d)
 | summarize
-    Count = count(),
-    LastSeen = max(TimeGenerated)
+    LastSeen = max(TimeGenerated),
+    TotalRecords = count()
     by LoginType, LoginStatus
-| order by Count desc
-```
-
-### Level 3 — Check for failed logins
-```kql
-// Failed Salesforce logins are high value for detecting
-// credential attacks against the platform
-Salesforce_LoginEvent
-| where TimeGenerated > ago(30d)
-| where LoginStatus != "Success"
-| summarize
-    Count = count(),
-    LastSeen = max(TimeGenerated)
-    by LoginStatus, LoginType
-| order by Count desc
+| extend DaysSinceLastLog = datetime_diff('day', now(), LastSeen)
+| order by TotalRecords desc
 ```
 
 ---
 
-## Heartbeat
+### Heartbeat
 
-### Level 1 — What machines are sending heartbeats?
+**Level 1 — What machines are sending heartbeats?**
 ```kql
 Heartbeat
 | where TimeGenerated > ago(30d)
 | summarize
-    Count = count(),
     LastSeen = max(TimeGenerated),
-    LastHeartbeat = max(TimeGenerated)
+    TotalRecords = count()
     by Computer, OSType, Category, Version
+| extend DaysSinceLastLog = datetime_diff('day', now(), LastSeen)
+| extend Status = case(
+    DaysSinceLastLog <= 1, "Active",
+    DaysSinceLastLog <= 7, "Review",
+    DaysSinceLastLog > 7,  "Inactive",
+    "No Data"
+)
 | order by LastSeen desc
 ```
 
-### Level 2 — Check for machines that recently stopped
+**Level 2 — Machines that recently stopped**
 ```kql
-// Machines that sent heartbeats in last 30 days but
-// not in the last 24 hours — potential agent failure
 Heartbeat
 | where TimeGenerated > ago(30d)
 | summarize LastSeen = max(TimeGenerated) by Computer
@@ -685,54 +946,14 @@ Heartbeat
 | order by HoursSince desc
 ```
 
-### Level 3 — Check agent versions
-```kql
-// Outdated AMA versions can cause ingestion issues
-Heartbeat
-| where TimeGenerated > ago(24h)
-| summarize LastSeen = max(TimeGenerated) by Computer, Version
-| order by Version asc
-```
+---
+
+## Notes and Observations
+
+*Add notes here as you work through tables. Date stamp anything important.*
 
 ---
 
-## General — Verify Table Health After Investigation
+## Queries in Progress
 
-After completing the investigation for any table run this
-final health check to confirm current status:
-
-```kql
-// Universal table health check
-// Replace TABLE_NAME with actual table
-TABLE_NAME
-| where TimeGenerated > ago(24h)
-| summarize
-    RecordCount = count(),
-    LastRecord = max(TimeGenerated),
-    HoursSinceLastRecord = datetime_diff('hour', now(), max(TimeGenerated))
-```
-
----
-
-## The Deep Dive Principle
-
-Every shared table investigation should answer these questions
-before you finalize the spreadsheet rows:
-
-1. How many distinct sources write to this table?
-2. What categories or event types does each source send?
-3. Are all expected categories present or are some missing?
-4. What is the security value of each category?
-5. Should missing categories be flagged as gaps?
-6. Does the table need one row or multiple rows?
-
-The Azure Firewall example is the model:
-- Surface level: one source, AZUREFIREWALLS
-- Deep level: four categories, each different detection coverage
-- DnsProxy missing = DNS blind spot not visible at surface level
-- Correct documentation: four rows or one row with detailed Notes
-
-Apply this thinking to every shared table. What looks like
-one thing at the surface is often multiple things underneath.
-Understanding what is underneath is what separates a real audit
-from a checkbox exercise.
+*Paste queries here while testing.*
