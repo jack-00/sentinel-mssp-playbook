@@ -248,6 +248,7 @@ AzureDiagnostics
 
 **Level 2 — What categories does each resource type send?**
 ```kql
+// AzureDiagnostics — Category Breakout
 // Replace AZUREFIREWALLS with your ResourceType
 AzureDiagnostics
 | where TimeGenerated > ago(30d)
@@ -263,26 +264,13 @@ AzureDiagnostics
     DaysSinceLastLog > 7,  "Inactive",
     "No Data"
 )
-| extend Table =     "AzureDiagnostics"
-| extend Origin =    "Microsoft Azure"
-| extend Transport = "Diagnostic Setting"
-| extend Category =  "[Manual] — Firewall / Network / Cloud Infrastructure / Compliance and Audit / Other"
-| extend Purpose =   "[Manual] — What does this category help detect?"
-| extend SilentDet = "[Manual] — AB##### or Missing"
-| extend Detections ="[Manual] — AB#####, AB##### or None"
-| extend Notes =     strcat("ResourceType: ", ResourceType, " | Category: ", Category)
 | project
-    Table,
+    ResourceType,
+    Category,
     Status,
     LastSeen,
     DaysSinceLastLog,
-    Origin,
-    Transport,
-    Category,
-    Purpose,
-    SilentDet,
-    Detections,
-    Notes
+    TotalRecords
 | order by Category asc
 ```
 

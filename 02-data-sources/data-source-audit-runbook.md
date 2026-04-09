@@ -58,9 +58,9 @@ The operational view. Becomes the Sentinel watchlist that powers the living work
 | # | Column | What Goes Here |
 |---|---|---|
 | 1 | Table | Exact Log Analytics table name — never modify |
-| 2 | Status | Current health — plain text from approved list |
-| 3 | LastSeen_UTC | Timestamp of most recent record |
-| 4 | DaysSinceLastLog | Days since last record — calculated by query |
+| 2 | Status | Current health — plain text from approved list. Stored in watchlist as audit snapshot. Workbook recalculates live from workspace queries — do not rely on watchlist Status in workbook logic. |
+| 3 | LastSeen | Raw datetime of most recent record. No formatting — raw datetime value only. Excel formats the column for display. Workbook queries wrap with todatetime() when reading from watchlist. |
+| 4 | DaysSinceLastLog | Days since last record — calculated by query for audit reference only. Do NOT include in watchlist upload. Workbook calculates this live from LastSeen at query time. |
 | 5 | LogSource | Plain English description of what writes to this table |
 | 6 | Origin | What generated this data — from approved list |
 | 7 | Transport | How data gets into Sentinel — from approved list |
@@ -253,7 +253,6 @@ search *
     DaysSinceLastLog > 7,  "Inactive",
     "No Data"
 )
-| extend LastSeen_UTC = format_datetime(LastSeen, 'yyyy-MM-dd HH:mm')
 // ── Manual fields — fill these in after export ───────────────
 | extend LogSource =  "[Manual] — Plain English description e.g. Windows Security Events via AMA, Microsoft Entra ID Sign-in Logs"
 | extend Origin =     "[Manual] — Microsoft Entra ID / Microsoft 365 / Microsoft Defender / Microsoft Azure / Microsoft Sentinel / Windows OS / Network Device / AWS / Salesforce / Zoom / Keeper Security / SecureW2 / Drupal / Multiple Sources / Custom / Unknown"
@@ -267,7 +266,7 @@ search *
 | project
     Table = $table,
     Status,
-    LastSeen_UTC,
+    LastSeen,
     DaysSinceLastLog,
     LogSource,
     Origin,
@@ -277,7 +276,7 @@ search *
     SilentDet,
     Detections,
     Notes
-| order by Status asc, LastSeen_UTC desc
+| order by Status asc, LastSeen desc
 ```
 
 **Reading the output:**
@@ -323,7 +322,6 @@ CommonSecurityLog
     DaysSinceLastLog > 7,  "Inactive",
     "No Data"
 )
-| extend LastSeen_UTC = format_datetime(LastSeen, 'yyyy-MM-dd HH:mm')
 | extend Table = "CommonSecurityLog"
 | extend LogSource = strcat(DeviceVendor, " — ", DeviceProduct)
 | extend Origin =     "[Manual] — Network Device or specific vendor name"
@@ -336,7 +334,7 @@ CommonSecurityLog
 | project
     Table,
     Status,
-    LastSeen_UTC,
+    LastSeen,
     DaysSinceLastLog,
     LogSource,
     Origin,
@@ -368,7 +366,6 @@ Syslog
     DaysSinceLastLog > 7,  "Inactive",
     "No Data"
 )
-| extend LastSeen_UTC = format_datetime(LastSeen, 'yyyy-MM-dd HH:mm')
 | extend Table = "Syslog"
 | extend LogSource = HostName
 | extend Origin =     "[Manual] — Windows OS for AMA Linux / specific appliance vendor"
@@ -381,7 +378,7 @@ Syslog
 | project
     Table,
     Status,
-    LastSeen_UTC,
+    LastSeen,
     DaysSinceLastLog,
     LogSource,
     Origin,
@@ -418,7 +415,6 @@ SecurityEvent
     DaysSinceLastLog > 7,  "Inactive",
     "No Data"
 )
-| extend LastSeen_UTC = format_datetime(LastSeen, 'yyyy-MM-dd HH:mm')
 | extend Table =      "SecurityEvent"
 | extend LogSource =  "Windows Security Events via AMA"
 | extend Origin =     "Windows OS"
@@ -431,7 +427,7 @@ SecurityEvent
 | project
     Table,
     Status,
-    LastSeen_UTC,
+    LastSeen,
     DaysSinceLastLog,
     LogSource,
     Origin,
@@ -496,6 +492,9 @@ Once merged:
 - Confirm My table has headers is checked
 - Click OK
 - Go to Home → Format → AutoFit Column Width
+- Select the LastSeen column → right click → Format Cells → Custom → type `yyyy-mm-dd hh:mm` → OK
+
+This formats LastSeen for human readability while keeping the underlying raw datetime value intact. Excel date functions and downstream queries can still use it correctly. Never convert LastSeen to a text string.
 
 **Step 6 — Save and upload to SharePoint**
 
@@ -676,11 +675,30 @@ If zero results — forwarder stopped receiving from this device. Check forwarde
 
 ## Step 12 — Upload Tab 1 as Watchlist
 
+**Before uploading — three important notes:**
+
+**Remove DaysSinceLastLog before upload.**
+DaysSinceLastLog is calculated at audit time and goes stale immediately after upload. Delete this column from the CSV before uploading or exclude it during watchlist column mapping. The workbook calculates DaysSinceLastLog live at query time from LastSeen.
+
+**Status is stored as an audit snapshot.**
+The Status column reflects what the status was at the time of the audit. It goes stale as soon as the watchlist is uploaded. The workbook always recalculates Status live from workspace queries — it never reads Status from the watchlist for current health decisions.
+
+**LastSeen becomes a string in the watchlist.**
+Watchlists store all values as strings regardless of original type. Any workbook query that reads LastSeen from the watchlist must wrap it with todatetime() before doing any date math or comparisons:
+```kql
+_GetWatchlist('DataSourceInventory')
+| extend LastSeen = todatetime(LastSeen)
+| extend DaysSinceLastLog = datetime_diff('day', now(), LastSeen)
+```
+This is required in every workbook query that uses LastSeen. Without it comparisons silently fail or return incorrect results.
+
+**Upload steps:**
 1. Navigate to Watchlists in Sentinel or Defender portal
 2. Create new watchlist named `DataSourceInventory`
-3. Export Tab 1 as CSV — upload that CSV
-4. Set SearchKey to Table column
-5. Validate:
+3. Export Tab 1 as CSV — remove DaysSinceLastLog column first
+4. Upload that CSV
+5. Set SearchKey to Table column
+6. Validate:
 
 ```kql
 _GetWatchlist('DataSourceInventory')
