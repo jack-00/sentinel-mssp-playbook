@@ -969,3 +969,277 @@ inventory
 ```
 
 Sources with DetectionCount = 0 are immediately visible as coverage gaps. This drives the gap analysis section of the workbook and feeds the detection value conversation in client reviews.
+
+
+---
+
+## DetectionCatalog — Building the Watchlist Using AI Assistance
+
+> **Note:** This section documents the exact process used to build the initial DetectionCatalog watchlist. All custom content for this program uses the prefix `OC` followed by numbers — for example `OC12345 - Cloud Alerts`. This is the company naming convention for all custom analytic rules delivered to clients.
+
+---
+
+### Why We Are Building This
+
+When a client asks what detections are protecting them the answer should be immediate, accurate, and complete. Without a DetectionCatalog that answer requires manually cross-referencing multiple places — the analytics rules list in Sentinel, internal documentation, and tribal knowledge held by individual engineers. That is slow, error-prone, and breaks down when engineers change.
+
+The DetectionCatalog solves this by creating a single structured record of every custom detection deployed for a client. It answers three questions that matter:
+
+- **What do we have?** — every OC-series rule in one place
+- **What does it do?** — plain English description per rule
+- **What does it depend on?** — which tables and watchlists each rule needs to function
+
+This watchlist is also the foundation for everything the workbook shows around detection coverage. The GetEnrichedInventory KQL function joins DataSourceInventory against DetectionCatalog to automatically surface how many detections each data source has, which sources have zero coverage, and which operational health rules are monitoring the platform. Without this watchlist none of that is possible without manual work before every client review.
+
+**For the audit deck** — the DetectionCatalog powers the detection coverage section. It shows the client a complete picture of what is protecting them, broken down by security detections and operational health monitoring. It is what lets you say with confidence "here is every detection we have built for you and here is what it watches for."
+
+---
+
+### What the DetectionCatalog Is
+
+The DetectionCatalog is a ledger of all custom content the company has built and deployed for a client. Every custom analytic rule — security detections, operational health rules, silent log source detections — has a row in this watchlist. It is the authoritative record of what has been built, what it does, what data it depends on, and who is responsible for it.
+
+This watchlist has two consumers:
+
+**The workbook** — joins DetectionCatalog against DataSourceInventory via the GetEnrichedInventory function to show detection coverage per data source, surface gaps, and power the audit deck.
+
+**The detection team and platform team** — use it as a shared ledger so both teams always know what exists, what tables it queries, and who owns it.
+
+---
+
+### Naming Convention and Watchlist Upload
+
+**Watchlist name:**
+```
+[CompanyName]-DetectionCatalog
+```
+Example: `Contoso-DetectionCatalog`
+
+Use your company name exactly as it appears in your other watchlists. This naming convention applies to all watchlists in this program — CompanyName prefix followed by the watchlist purpose. Consistency here matters because KQL queries reference the watchlist name directly. Changing the name after upload means updating every query that uses it.
+
+**How to upload to Sentinel:**
+1. Complete the spreadsheet fully — all six fields filled in, no [Manual] placeholders remaining
+2. Export Tab 1 as CSV
+3. Navigate to Sentinel → Watchlists → Create new
+4. Enter the watchlist name: `[CompanyName]-DetectionCatalog`
+5. Enter an alias — use the same name as the watchlist
+6. Upload the CSV file
+7. Set the SearchKey to `RuleId`
+8. Click Review and Create
+9. Wait for the upload to complete — row count will appear when done
+10. Validate the upload:
+
+```kql
+_GetWatchlist('[CompanyName]-DetectionCatalog')
+| summarize TotalRows = count()
+```
+
+Confirm the row count matches your spreadsheet. If it does not match re-check the CSV for formatting issues — blank rows, merged cells, or special characters in the Description field are common causes.
+
+---
+
+### Field Definitions
+
+The DetectionCatalog watchlist has six fields in this exact order:
+
+| Field | What Goes Here |
+|---|---|
+| RuleId | The unique rule identifier — OC##### |
+| AnalyticRule | Full rule name exactly as it appears in Sentinel — OC##### - Rule Name |
+| Table | Comma separated exact table names this rule queries. Use `All` if the rule uses search * or union * across all tables. |
+| Watchlist | Comma separated watchlist names this rule references. Write None if no watchlists are used. |
+| AlertClass | `Security` for threat detections and anomaly rules. `Operational` for platform health rules — silent log sources, heartbeat monitoring, Logic App failures, data limit alerts, connector health. |
+| Description | Plain English explanation of what this rule detects or monitors. Written so any engineer can understand it without reading the KQL. |
+
+**AlertClass values and ownership:**
+
+| Value | Used For | Owned By |
+|---|---|---|
+| Security | Threat detections, TI matching, anomaly rules, behavioral detections | Detection team |
+| Operational | Silent log source detections, heartbeat miss, Logic App failure, data limit warning, data limit reached, connector health, missed ingestion | Platform team |
+
+---
+
+### The AI-Assisted Build Process
+
+Building the DetectionCatalog manually from scratch is time consuming. The following process uses AI to extract and structure the information from Sentinel analytics rules efficiently. This process was used to build the initial catalog and should be repeated when adding large batches of new rules.
+
+---
+
+#### Step 1 — Train the AI
+
+Before starting open your AI assistant and provide the following prompt to establish context and output format:
+
+```
+I am building a detection catalog watchlist for Microsoft Sentinel.
+I will be providing you with analytic rule information one rule at a time
+or in batches. For each rule I provide please extract and output the
+following fields in CSV format with these exact column headers:
+
+RuleId, AnalyticRule, Table, Watchlist, AlertClass, Description
+
+Field instructions:
+- RuleId: The OC##### identifier only — no other text
+- AnalyticRule: The full rule name exactly as provided
+- Table: Comma separated list of exact Log Analytics table names
+  queried in the KQL. If the rule uses search * or union * write All.
+  If you cannot determine the table from the KQL write [Manual]
+- Watchlist: Comma separated watchlist names referenced in the KQL
+  using _GetWatchlist(). Write None if no watchlists are referenced.
+- AlertClass: Write Security if this is a threat or anomaly detection.
+  Write Operational if this monitors platform health — silent log
+  sources, heartbeats, Logic App failures, data limits, connector health.
+- Description: One to two sentences in plain English explaining what
+  this rule detects or monitors. Write it so any engineer can
+  understand it without reading the KQL.
+
+Output only the CSV rows — no headers, no explanation, no markdown.
+I will add the header row myself.
+
+Confirm you understand this format before I begin providing rules.
+```
+
+Wait for the AI to confirm it understands before proceeding.
+
+---
+
+#### Step 2 — Filter Rules in Sentinel
+
+In the Sentinel portal:
+
+```
+Sentinel → Analytics → Active rules
+→ Search bar: type OC
+→ This filters to all custom OC-prefixed rules
+→ Sort alphabetically by name
+→ Start from the top
+```
+
+---
+
+#### Step 3 — Extract Rule Information
+
+For each rule work through the following:
+
+1. Click the rule to open it
+2. Copy the following information in this order into a text editor:
+   - Rule name — exactly as shown
+   - Rule ID — the OC##### identifier
+   - Description — from the rule description field
+   - KQL Query — the full query from the rule editor
+
+Paste all four items into the text editor together for each rule before moving to the next. This keeps the information grouped and prevents mixing up rules.
+
+**Text editor format per rule:**
+```
+Name: OC12345 - Cloud Alerts
+ID: OC12345
+Description: [description from rule]
+Query:
+[full KQL query]
+---
+```
+
+---
+
+#### Step 4 — Batch and Send to AI
+
+Work through rules in batches of approximately 50. After each batch:
+
+1. Copy the entire batch from the text editor
+2. Paste into the AI assistant
+3. The AI outputs CSV rows for each rule
+4. Copy the CSV output into your spreadsheet
+5. Clear the text editor and start the next batch
+
+**Why batches of 50:**
+AI context windows have limits. Batching prevents the AI from losing context of earlier rules. At 50 rules per batch the output stays accurate and consistent.
+
+---
+
+#### Step 5 — Handle Manual Fields
+
+After the AI processes each batch review the output for:
+
+- Table = `[Manual]` — the AI could not determine the table from the KQL. Open the rule, read the KQL, and fill in the table name yourself.
+- AlertClass — verify the AI correctly classified each rule as Security or Operational. The AI may misclassify operational rules as security rules if the rule name is ambiguous. Review all Operational rules manually.
+- Description — review for accuracy. The AI generates descriptions from the KQL logic. Verify they accurately describe what the rule detects.
+
+---
+
+#### Step 6 — Add the AlertClass Field
+
+After all rules are extracted and in the spreadsheet:
+
+1. Add the AlertClass column if not already present
+2. Work through every row and assign Security or Operational
+3. Use this guidance:
+   - Contains SLD, silence, heartbeat, Logic App, data limit, connector, ingestion → Operational
+   - Everything else → Security
+4. Review all Operational assignments — these are platform team owned
+
+---
+
+#### Step 7 — Create the CSV and Upload
+
+Once the spreadsheet is complete and reviewed:
+
+1. Save as Excel workbook first:
+```
+[ClientName]-DetectionCatalog-[YYYY-MM-DD].xlsx
+```
+2. Upload to SharePoint as the backup copy
+3. Export Tab 1 as CSV for watchlist upload
+4. In Sentinel navigate to Watchlists → Create new watchlist
+5. Name the watchlist:
+```
+[CompanyName]-DetectionCatalog
+```
+6. Upload the CSV
+7. Set SearchKey to `RuleId`
+8. Confirm row count matches your spreadsheet
+
+---
+
+### Gap Detection — Finding Missing Rules
+
+After the initial upload run this query periodically to find rules that exist in Sentinel but are missing from the DetectionCatalog. Run after every detection team release cycle and at minimum monthly.
+
+```kql
+// ============================================================
+// DETECTION CATALOG GAP DETECTION
+// Finds OC-prefixed rules in SentinelHealth not in DetectionCatalog
+// ============================================================
+let catalog = _GetWatchlist('[CompanyName]-DetectionCatalog')
+| summarize by RuleId;
+SentinelHealth
+| where SentinelResourceType == "Analytics Rule"
+| where SentinelResourceName matches regex @"^OC\d+"
+| summarize LastRun = max(TimeGenerated)
+    by SentinelResourceName
+| extend RuleId = extract(@"^(OC\d+)", 1, SentinelResourceName)
+| join kind=leftanti (
+    catalog
+) on RuleId
+| extend Status = "Missing from DetectionCatalog — add to watchlist"
+| project
+    SentinelResourceName,
+    RuleId,
+    LastRun,
+    Status
+| order by SentinelResourceName asc
+```
+
+Any rule returned needs to be added. Use the AI process above for new rules — process them in a batch and append to the existing CSV before re-uploading the watchlist.
+
+---
+
+### Ongoing Maintenance
+
+| Task | When | Who |
+|---|---|---|
+| Add new rules to DetectionCatalog | When new OC rules are deployed | Platform team or detection team |
+| Run gap detection query | After every detection team release | Platform team |
+| Review AlertClass assignments | When rule purpose changes | Platform team |
+| Update Table field when rule KQL changes | When detection team modifies a rule | Detection team notifies platform team |
+| Re-upload updated CSV to watchlist | After any changes | Platform team |
