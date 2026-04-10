@@ -369,3 +369,23 @@ Every solution we build must pass these three tests before it is considered comp
 **Scalable** — Does adding more clients, more tables, or more detections require rebuilding the system or just adding to it? The master function pattern is scalable — add a sub-function and a union line. Workbook queries that hardcode table names are not scalable.
 
 **Automate where the value justifies the overhead.** Not everything should be automated. Automation adds maintenance burden — schedules to monitor, credentials to rotate, failures to detect. Only automate when the manual alternative is genuinely unsustainable.
+
+
+---
+
+## LogSourceRequirements — Traceability Rule
+
+Every row in LogSourceRegistry must have a corresponding entry in LogSourceRequirements. If a log source is in LogSourceRegistry but has no requirement documented it should be questioned and either justified or removed.
+
+When building queries or functions that use LogSourceRegistry consider joining against LogSourceRequirements to surface the requirement context — especially useful in the audit deck to explain to clients why specific sources are being monitored.
+
+```kql
+// Example — enrich LogSourceRegistry with requirement context
+_GetWatchlist('LogSourceRegistry')
+| join kind=leftouter (
+    _GetWatchlist('LogSourceRequirements')
+    | project Table, LogSource, RequirementType, RequirementSource, Priority
+) on Table, LogSource
+```
+
+Any row where RequirementType is null after this join is a source with no documented requirement — flag for review.
