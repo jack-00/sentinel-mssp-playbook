@@ -1,0 +1,439 @@
+# Developer Notes — Things to Consider Before Writing Code
+
+> **Purpose:** This file captures edge cases, oddities, architectural decisions, and gotchas that must be considered when writing KQL functions, workbook queries, and automation. Before writing any code read this file first. When something new comes up that could affect future code add it here immediately.
+>
+> **Who uses this:** Anyone writing KQL, workbook queries, Logic App expressions, or automation for this program.
+>
+> **Last Updated:** April 2026
+
+---
+
+## DetectionCatalog — Special Cases
+
+### Detections That Query All Tables
+Some AB-series detections use `search *` or `union *` to query across all tables simultaneously. For these detections the Table field in DetectionCatalog is set to `All` rather than a specific table name.
+
+**Impact on KQL:**
+The `mv-expand` join between DetectionCatalog and DataSourceInventory on the Table field will not match `All` against any specific table name. These detections will not appear in the per-source detection count in the workbook unless handled explicitly.
+
+**How to handle it:**
+When building the GetEnrichedInventory function add a separate branch that identifies detections where Table = `All` and surfaces them as workspace-level detections — not tied to any specific source. The workbook should show these separately, perhaps as a workspace-wide coverage indicator.
+
+```kql
+// Separate handling for All-table detections
+let allTableDets = _GetWatchlist('DetectionCatalog')
+| where Table == "All"
+| summarize AllTableDetections = make_set(AnalyticRule);
+```
+
+**Do not** try to join `All` against every row in DataSourceInventory — this would incorrectly inflate detection counts for every source.
+
+---
+
+## DataSourceInventory — Datetime Handling
+
+### LastSeen Is Stored as a String in the Watchlist
+Watchlists store all values as strings regardless of original type. LastSeen is a raw datetime value in the spreadsheet but becomes a string after watchlist upload.
+
+**Every workbook query that uses LastSeen must wrap it with todatetime():**
+```kql
+_GetWatchlist('DataSourceInventory')
+| extend LastSeen = todatetime(LastSeen)
+| extend DaysSinceLastLog = datetime_diff('day', now(), LastSeen)
+```
+
+Forgetting `todatetime()` causes silent failures — date math returns null, DaysSinceLastLog returns null, status calculations break. No error message. Just wrong results.
+
+### DaysSinceLastLog Is Not in the Watchlist
+DaysSinceLastLog was deliberately excluded from the watchlist because it goes stale immediately after upload. Always calculate it live at query time from LastSeen.
+
+### Status Is an Audit Snapshot — Not a Live Value
+The Status field in the watchlist reflects what the status was at the time of the audit. Do not use watchlist Status for current health decisions in the workbook. Always recalculate Status live from the workspace using DaysSinceLastLog derived from a live query.
+
+---
+
+## DetectionCatalog — Table Field Handling
+
+### Comma Separated Values Require mv-expand
+The Table field contains comma separated table names. Always use `mv-expand` before joining against DataSourceInventory:
+
+```kql
+_GetWatchlist('DetectionCatalog')
+| mv-expand Tables = split(Table, ",")
+| extend TableName = trim(" ", tostring(Tables))
+```
+
+The `trim()` is important — if there are spaces after commas `SignInLogs, SecurityEvent` the split produces ` SecurityEvent` with a leading space which will not match `SecurityEvent` in DataSourceInventory.
+
+Same applies to the Watchlists field — use `mv-expand` before any join on watchlist names.
+
+### Table Names Must Match Exactly
+The join between DetectionCatalog and DataSourceInventory depends on exact table name matching. Case sensitive. No aliases. `SecurityEvent` not `Security Event` not `securityevent`.
+
+If a join produces unexpected nulls or zero matches check for:
+- Trailing spaces
+- Leading spaces after comma separation
+- Different casing
+- Abbreviated or aliased names
+
+---
+
+## ASIM Tables — Health Dependency
+
+### ASIM Tables Do Not Have Independent Health
+ASimNetworkSessionLogs, ASimAuditEventLogs, ASimWebSessionLogs are normalized views over raw tables. Their health depends entirely on the health of the source tables feeding them.
+
+**Impact on workbook:**
+Do not show ASIM table status as independent health indicators. If the workbook shows ASimNetworkSessionLogs as Active but CommonSecurityLog is Inactive the ASIM table is producing degraded output. The workbook should surface this dependency.
+
+**How to handle it:**
+When building the ASIM rows in the workbook add a note or indicator that health is derived from source tables. Consider adding a dependency check that warns when an ASIM source table is inactive.
+
+### Transport = ASIM Parser
+When filtering DetectionCatalog to understand what a detection depends on — if the detection queries an ASIM table remember that fixing the ASIM table means fixing its source tables, not the ASIM table itself.
+
+---
+
+## Shared Tables — Multiple Sources
+
+### CommonSecurityLog, Syslog, AzureDiagnostics Have Multiple Rows
+These tables appear multiple times in DataSourceInventory — one row per log source category writing to them. When joining DetectionCatalog against DataSourceInventory on these tables the join will produce multiple matches — one per log source row.
+
+**Impact on detection counts:**
+A detection that queries CommonSecurityLog will match against every CommonSecurityLog row in DataSourceInventory — Palo Alto, Fortinet, and any other vendor. This is correct behavior — losing any of those sources affects the detection. But the workbook needs to handle the resulting multiple matches cleanly without inflating counts.
+
+**How to handle it:**
+Summarize after the join to get distinct detection counts per table not per source row:
+```kql
+| summarize DetectionCount = dcount(AnalyticRule) by Table, LogSource
+```
+
+### AzureDiagnostics Category Breakout
+AzureDiagnostics has multiple rows for different ResourceTypes AND multiple rows within each ResourceType for different log categories (e.g. Azure Firewall has ApplicationRule, NetworkRule, DnsProxy, ThreatIntelLog).
+
+When a detection queries AzureDiagnostics it may only care about a specific ResourceType or Category. The current DetectionCatalog design does not capture this granularity — Table = `AzureDiagnostics` applies to all rows.
+
+**Future consideration:** May need a ResourceType or Category sub-field in DetectionCatalog for AzureDiagnostics detections to enable accurate dependency mapping.
+
+---
+
+## ThreatIntelIndicators — Multiple Feeds
+
+### Multiple Feeds Write to the Same Table
+ThreatIntelIndicators receives data from multiple feeds identified by the SourceSystem field. In DataSourceInventory this table has multiple rows — one per feed.
+
+**Impact on detections:**
+A detection that joins against ThreatIntelIndicators depends on ALL feeds being healthy — if one feed goes stale the detection continues to fire but with reduced coverage. The workbook should surface this nuance rather than showing a simple active/inactive status.
+
+### Always Filter on ExpirationDateTime
+Any detection or workbook query that reads from ThreatIntelIndicators should filter on active indicators only:
+```kql
+| where ExpirationDateTime > now()
+```
+
+Without this filter stale expired indicators are included which causes false positives and inflates match counts.
+
+### Legacy Table Still Exists
+`ThreatIntelligenceIndicator` is the legacy table. Some older analytics rules may still reference it. New indicators only go to `ThreatIntelIndicators`. If a detection references the legacy table it will not match against new indicators. Check for this when reviewing detection effectiveness.
+
+---
+
+## Watchlist Size Limits
+
+### 10MB Per Watchlist
+Sentinel watchlists have a 10MB size limit. As DetectionCatalog grows — especially the Description field with long text — this limit could become a constraint.
+
+**Monitor:** Check watchlist size periodically. If approaching the limit consider splitting into multiple watchlists by detection type (SLD vs standard detections) or by category.
+
+---
+
+## ingestion_time() Is a Function Not a Field
+
+### Cannot Be Stored or Filtered Efficiently
+`ingestion_time()` is calculated at query time. It cannot be stored as a field. It cannot be used to filter large datasets efficiently.
+
+**For batch source health monitoring** use it in summary queries not in filters:
+```kql
+// Good — summarize then check
+| summarize LastIngestion = max(ingestion_time())
+| where datetime_diff('hour', now(), LastIngestion) > 25
+
+// Bad — filtering millions of rows with ingestion_time()
+| where ingestion_time() > ago(25h)
+```
+
+### _TimeReceived Is Resource Intensive
+`_TimeReceived` is calculated each time it is used. Avoid using it to filter large numbers of records. Use it only for latency analysis on small summarized result sets.
+
+---
+
+## DCR Timestamp Standards
+
+### TimeGenerated Should Always Be Event Time
+TimeGenerated must always be explicitly set in DCR transforms to the source event timestamp. If not set it defaults to ingestion time which makes the data appear as if everything happened at once when a batch arrives.
+
+### TimeIngested Field Convention
+For batch sources that send daily dumps add `extend TimeIngested = _TimeReceived` in the DCR transform. This creates a stored field capturing when the batch actually arrived — separate from when the events happened. Use TimeIngested not TimeGenerated for health monitoring of batch sources.
+
+### Salesforce and Other Batch Sources
+Salesforce sends a daily dump. All records arrive at once but have event timestamps throughout the day. If TimeGenerated is correctly set to the source event timestamp the data looks like continuous activity even though it arrived in one batch. Always use `ingestion_time()` or TimeIngested for freshness checks on batch sources — not TimeGenerated.
+
+---
+
+## Multi-Workspace Considerations
+
+### Workbook Queries Assume Single Workspace Context
+All current queries are written for single workspace context. When the workbook needs to work across multiple client workspaces via Lighthouse the workspace scope must be explicitly handled.
+
+**Future consideration:** Workbook parameters will need a workspace selector. Queries may need `workspace()` function calls. The GetEnrichedInventory function will need to accept a workspace parameter or be scoped per workspace deployment.
+
+---
+
+## GetEnrichedInventory Function Design
+
+### Function Must Handle Missing Joins Gracefully
+Not every table in DataSourceInventory will have matching rows in DetectionCatalog. Not every detection in DetectionCatalog will match a table in DataSourceInventory. Use `leftouter` joins not `inner` joins to preserve all DataSourceInventory rows.
+
+```kql
+| join kind=leftouter detections on Table
+```
+
+### Null Handling After Join
+After a leftouter join rows with no matching detection will have null DetectionCount. Always use `coalesce()` to handle nulls:
+```kql
+| extend DetectionCount = coalesce(DetectionCount, 0)
+| extend HasCoverage = DetectionCount > 0
+```
+
+### Performance Consideration
+The `search *` in the live health query within GetEnrichedInventory is expensive across large workspaces. Consider limiting to `ago(24h)` and only running the live health portion when the workbook tab is actively viewed — not as part of a background refresh.
+
+---
+
+## General KQL Gotchas
+
+### make_set Has a Default Limit of 128
+`make_set()` truncates at 128 items by default. For DetectionCatalog joins where a table might have many detections use `make_set(AnalyticRule, 500)` to increase the limit.
+
+### trim() After Split
+Always `trim(" ", tostring(value))` after splitting comma separated fields. Leading and trailing spaces cause silent join failures.
+
+### Case Sensitivity in Joins
+KQL string joins are case sensitive by default. Table names in DetectionCatalog must match DataSourceInventory exactly including casing. `SignInLogs` != `signinlogs`.
+
+---
+
+*Add new notes here as they come up during development. Reference this file before writing any KQL function, workbook query, or automation logic.*
+
+---
+
+## Shared Table Health Check Architecture — KQL Functions
+
+### The Problem
+Each shared table needs different filter conditions to identify its sub-sources. CommonSecurityLog uses DeviceVendor and DeviceProduct. AzureDiagnostics uses ResourceType and Category. Syslog uses HostName. ThreatIntelIndicators uses SourceSystem. These cannot be standardized at the filter level — they are fundamentally different.
+
+Dynamic KQL execution of stored filter strings is not possible. Storing filter conditions in a watchlist and applying them at query time is fragile and not maintainable at scale.
+
+### The Solution — Standardize the Output Not the Input
+Each shared table gets its own KQL function that handles its specific filter logic internally. Every function returns the exact same four columns regardless of how the data is filtered internally:
+
+```
+Table, LogSource, LastSeen, Status
+```
+
+A master function unions all sub-functions together and joins against LogSourceRegistry for metadata enrichment. The workbook calls the master function only — it never changes regardless of how many shared tables exist.
+
+### The Contract — Every Sub-Function Must Return These Four Columns
+```kql
+// Every shared table sub-function must return this exact schema
+// Table      — exact table name
+// LogSource  — the specific log source category name matching LogSourceRegistry
+// LastSeen   — raw datetime of most recent record for this source
+// Status     — Active / Review / Inactive / Missing / No Data
+```
+
+### Example Sub-Function Structure
+```kql
+// GetAzureDiagnosticsHealth()
+// Returns one row per expected AzureDiagnostics sub-source
+union
+(
+    AzureDiagnostics
+    | where TimeGenerated > ago(24h)
+    | where ResourceType == "AZUREFIREWALLS"
+    | where Category == "AzureFirewallApplicationRule"
+    | summarize LastSeen = max(TimeGenerated)
+    | extend Table = "AzureDiagnostics"
+    | extend LogSource = "Azure Firewall — Application Rule"
+),
+(
+    AzureDiagnostics
+    | where TimeGenerated > ago(24h)
+    | where ResourceType == "VAULTS"
+    | where Category == "AuditEvent"
+    | summarize LastSeen = max(TimeGenerated)
+    | extend Table = "AzureDiagnostics"
+    | extend LogSource = "Azure Key Vault — Audit Events"
+)
+| extend DaysSince = datetime_diff('day', now(), LastSeen)
+| extend Status = case(
+    DaysSince <= 1, "Active",
+    DaysSince <= 7, "Review",
+    DaysSince > 7,  "Inactive",
+    "No Data"
+)
+| project Table, LogSource, LastSeen, Status
+```
+
+### The Master Function Structure
+```kql
+// GetSharedTableHealth()
+// Unions all shared table sub-functions
+// Returns complete health picture for all shared table sub-sources
+// Join against LogSourceRegistry for metadata
+let registry = _GetWatchlist('LogSourceRegistry');
+union
+    GetAzureDiagnosticsHealth(),
+    GetCommonSecurityLogHealth(),
+    GetSyslogHealth(),
+    GetThreatIntelHealth(),
+    GetASimHealth()
+| join kind=fullouter registry on Table, LogSource
+| extend FinalStatus = iff(isnull(LastSeen), "Missing", Status)
+| extend DaysSince = datetime_diff('day', now(), LastSeen)
+| project
+    Table,
+    LogSource,
+    Category,
+    Origin,
+    Transport,
+    Purpose,
+    SilentDet,
+    FinalStatus,
+    LastSeen,
+    DaysSince,
+    Notes
+```
+
+### How to Add a New Shared Table
+1. Write a new sub-function following the exact output schema above
+2. Add the sub-function to the union in GetSharedTableHealth()
+3. Add rows to LogSourceRegistry for each expected sub-source
+4. Done — workbook picks it up automatically via the master function
+
+### Shared Tables That Need Sub-Functions Written
+- AzureDiagnostics — ResourceType + Category
+- CommonSecurityLog — DeviceVendor + DeviceProduct
+- Syslog — HostName
+- ThreatIntelIndicators — SourceSystem
+- ThreatIntelObjects — SourceSystem
+- ASimNetworkSessionLogs — EventVendor + EventProduct
+- ASimAuditEventLogs — EventVendor + EventProduct
+- ASimWebSessionLogs — EventVendor + EventProduct
+- SecurityEvent — single source category, may not need sub-function
+- AzureMetrics — ResourceType + MetricName if needed
+
+### The Fit Check
+The fullouter join in the master function IS the fit check:
+- In LogSourceRegistry but LastSeen is null → Missing — source not reporting
+- LastSeen present but not in LogSourceRegistry → Unknown new source appeared
+- Both present → compare Status
+
+The workbook surfaces this. Analytics rules fire when Missing sources are detected. No separate fit check query needed — it is built into the join.
+
+---
+
+## Logic Apps — Future Automation Thinking
+
+Logic Apps are available and should be considered for automation where KQL functions and watchlists are not sufficient. Current thinking is to get the KQL function and watchlist layer solid first before introducing Logic App complexity.
+
+**Potential Logic App use cases to explore later:**
+- Snapshot pipeline — write DataSourceAudit_CL weekly for Tab 5 Insights
+- New source detector — compare workspace tables against DataSourceInventory, create Flag rows automatically
+- Credential expiry notifications — read IntegrationRegistry, send Teams alerts 30 days before expiry
+- DetectionCatalog sync — trigger Python script run when new rules are deployed
+- Watchlist updates — automate updates to watchlists when source configurations change
+
+**The constraint:** Logic Apps introduce credential management, schedule monitoring, and failure detection overhead. Every Logic App needs its own silent detection. Only introduce them when the automation value clearly outweighs the maintenance burden.
+
+---
+
+## Core Engineering Principles for This Program
+
+Every solution we build must pass these three tests before it is considered complete:
+
+**Repeatable** — Can a different engineer follow the same process and get the same result? If it depends on tribal knowledge or undocumented steps it is not repeatable.
+
+**Standardized** — Does it follow the same pattern as everything else in the system? New shared tables get sub-functions. New watchlists follow the naming convention. New detections follow the AB##### or OC##### convention. Consistency is what makes the system navigable at scale.
+
+**Scalable** — Does adding more clients, more tables, or more detections require rebuilding the system or just adding to it? The master function pattern is scalable — add a sub-function and a union line. Workbook queries that hardcode table names are not scalable.
+
+**Automate where the value justifies the overhead.** Not everything should be automated. Automation adds maintenance burden — schedules to monitor, credentials to rotate, failures to detect. Only automate when the manual alternative is genuinely unsustainable.
+
+
+---
+
+## LogSourceRequirements — Traceability Rule
+
+Every row in LogSourceRegistry must have a corresponding entry in LogSourceRequirements. If a log source is in LogSourceRegistry but has no requirement documented it should be questioned and either justified or removed.
+
+When building queries or functions that use LogSourceRegistry consider joining against LogSourceRequirements to surface the requirement context — especially useful in the audit deck to explain to clients why specific sources are being monitored.
+
+```kql
+// Example — enrich LogSourceRegistry with requirement context
+_GetWatchlist('LogSourceRegistry')
+| join kind=leftouter (
+    _GetWatchlist('LogSourceRequirements')
+    | project Table, LogSource, RequirementType, RequirementSource, Priority
+) on Table, LogSource
+```
+
+Any row where RequirementType is null after this join is a source with no documented requirement — flag for review.
+
+
+---
+
+## Final Watchlist Design — Locked
+
+Five watchlists. No more, no less. Every design decision below is final unless explicitly revisited.
+
+### The Five Watchlists
+
+```
+[mssname]-tables        — table pipe registry, backbone
+[mssname]-sources       — data source details, transport, SLS, functions
+[mssname]-detections    — detection catalog, owned by detection team
+[mssname]-dependencies  — credentials, API keys, expiry tracking
+[mssname]-client        — client profile, contacts, links
+```
+
+### The Table vs Source Split — Why It Matters
+
+A table is a pipe. It is just a container. We track it at a high level to know it exists and catch new tables appearing. Transport, origin, SLS, function names — none of that belongs at the table level because one table can have multiple sources each with completely different transport methods and SLS commitments.
+
+The source watchlist is where everything meaningful lives. One row per tracked data source. This is what drives the workbook data sources tab, the silent detections, the sub-functions, and the dependencies.
+
+### SLS Lives at the Source Level
+SLS = Yes/No is a field in `[mssname]-sources` not in `[mssname]-tables`. This is because one table can have multiple sources and each source may have a different SLS commitment. A table-level SLS flag would be ambiguous and misleading.
+
+### Dependencies Are Separate From Sources
+One dependency can affect multiple sources. Storing dependency details in the source watchlist would require duplicating credential information across multiple rows. `[mssname]-dependencies` stores each credential once and links to affected sources via the LinkedSource field.
+
+### Audit Deck Tab Order — Final
+```
+1. Splash
+2. SLS and Capabilities
+3. Table Health
+4. Data Sources
+5. Dependencies
+6. Detections
+7. MITRE Coverage
+8. Ingestion and Cost
+9. Opportunities and Action Items
+```
+
+### Two Modes — Client and Internal
+The audit deck workbook serves two audiences. Client mode shows clean visualizations and plain English summaries. Internal MSSP mode shows full technical detail. Same functions, same data, different field projections in the workbook queries. Design every function to return all fields — the workbook query controls what is shown per mode.
+
+### MonitoringFrequency Field
+Both `[mssname]-tables` and `[mssname]-sources` have a MonitoringFrequency field. Values: None / 1h / 5h / 15h / 24h / 48h. This field drives silent detection threshold configuration. A source with MonitoringFrequency = 24h gets a silent detection that fires if no data arrives in 24 hours. The silent detection reads this field from the watchlist — changing the threshold means updating the watchlist, not the detection KQL.
