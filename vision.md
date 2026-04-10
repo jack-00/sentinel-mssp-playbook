@@ -137,128 +137,244 @@ This is only possible because the operating system underneath is solid. The watc
 
 ## The Audit Deck Structure
 
-### Splash Screen — Client Overview
-The first thing visible when the deck opens. Sets the context for everything that follows.
+The audit deck is client facing. Every tab is designed to tell a story that a non-technical client can follow. Data that is for internal MSSP use only belongs in the separate MSSP internal workbook — not the audit deck.
 
-- Client name and company logo
+The audit deck has two modes — the same workbook serves both. Client mode shows clean visualizations and plain English summaries. Internal mode shows the full technical detail underneath. Same data, different presentation.
+
+---
+
+### Tab 1 — Splash Screen
+**Who is this client and are they fundamentally healthy right now?**
+
+- Client name and logo
 - One paragraph bio — who they are, their industry, why security matters to them
 - Onboarding date — how long we have been their partner
-- Primary escalation contact — who to call when something is critical
-- Key links — Sentinel workspace, SharePoint folder, ServiceNow, important portals
 - Current overall status — one indicator: Healthy / Needs Attention / Critical
 - Data sources tracked — total count
+- Active vs inactive breakdown
+- Primary escalation contact
+- Key links — Sentinel workspace, SharePoint, ServiceNow
 - Last audit date and next audit date
 
-This slide answers: who is this client and are they fundamentally healthy right now.
+Data source: `[mssname]-client` watchlist
 
 ---
 
-### Section 1 — Platform Health
-**Are we taking care of the platform?**
+### Tab 2 — SLS and Capabilities
+**What did we commit to and are we delivering it?**
 
-- Baseline compliance — X of Y baseline items complete. What is missing and why.
-- Data source health — X of Y sources active. Inactive and review sources called out.
-- Silent detection coverage — X of Y sources have active monitoring.
-- Capability status — UEBA, Threat Intelligence, Fusion ML, SOC Optimization. Each one healthy or degraded with dependency chain visible.
-- Integration health — all API keys and credentials current. Next expiry date.
-- Recent incidents or issues — anything that broke, how quickly we caught it, how we resolved it.
+- Every item in our SLS commitment with current status
+- Meeting / At Risk / Not Meeting — with evidence not just a status
+- Capability health — UEBA, Threat Intelligence, Fusion ML, SOC Optimization
+- Each capability shown as healthy or degraded with plain English explanation
+- Any items not meeting SLS — root cause and remediation plan
 
-This section answers: is the platform in good shape and are we doing our job.
-
----
-
-### Section 2 — SLS Commitment
-**Are we meeting what we promised?**
-
-- List every item in our SLS commitment
-- Current status against each item — meeting / at risk / not meeting
-- Evidence for each item — not just a status, actual data
-- Any items not meeting SLS — root cause, remediation plan, target date
-
-This section answers: did we do what we said we would do.
+Data source: `[mssname]-client`, `[mssname]-sources`, live capability queries
 
 ---
 
-### Section 3 — Detection Coverage
-**Are we making full use of their data?**
+### Tab 3 — Table Health
+**What data pipes do we have and are they working?**
 
-- Total detections active — split by Security and Operational
-- Detection coverage by data source — which sources have detections, which do not
-- MITRE coverage map — tactics and techniques covered, gaps highlighted
-- Available detections not yet enabled — what we could turn on and what data it would require
-- Detection performance — top firing detections, true positive rate, tuning opportunities
-- Noisy detections — anything firing excessively that may need tuning
+- Every tracked table with current status
+- Active, Inactive, Review, Missing
+- Clean simple view — no technical detail
+- New tables that appeared since last audit highlighted
+- Tables that went inactive since last audit highlighted
 
-This section answers: are we using their data well and where can we improve.
+Data source: `[mssname]-tables`, live workspace query via GetTableHealth()
 
 ---
 
-### Section 4 — Cost and Value
-**Is their money being spent wisely?**
+### Tab 4 — Data Sources
+**What is flowing through each pipe and is it all working?**
+
+- Every tracked data source with current health
+- Last seen, days since last log, status
+- Associated detections per source — count only in main view, detail on click
+- SLS sources clearly identified
+- Sources with zero detection coverage flagged as gaps
+
+Data source: `[mssname]-sources`, `[mssname]-detections`, live queries via GetSourceHealth()
+
+---
+
+### Tab 5 — Dependencies
+**What external things could silently break our data collection?**
+
+- Every API key, client secret, OAuth token, and credential tracked
+- Days until expiry — traffic light green / amber / red
+- What breaks if it expires — plain English list of affected sources
+- Who owns the rotation and when it was last rotated
+- Anything expiring within 30 days called out prominently
+
+Data source: `[mssname]-dependencies` watchlist via GetDependencyHealth()
+
+---
+
+### Tab 6 — Detections
+**What are we watching for and is it all working?**
+
+- Every custom detection — what it does, enabled status, last fired
+- 30 day alert count per detection
+- Split by Security and Operational
+- Detections that have not fired in 30 days flagged for review
+- Detections that are enabled but their source is inactive flagged as blind
+
+Data source: `[mssname]-detections`, SentinelHealth, SecurityAlert
+
+---
+
+### Tab 7 — MITRE Coverage
+**How well are we protecting against known attack techniques?**
+
+- MITRE ATT&CK heatmap — covered tactics and techniques
+- Detections that are available but not yet enabled — what data would activate them
+- Gap analysis — where coverage is thin and what would improve it
+- Story of where we have invested and where we can grow
+
+Data source: `[mssname]-detections`, Microsoft built-in MITRE workbook reference
+
+---
+
+### Tab 8 — Ingestion and Cost
+**Is the investment being used wisely?**
 
 - Ingestion cost breakdown by data source — last 30 days
-- Cost vs coverage — sources with high ingestion and zero detections flagged
-- Month over month trend — is cost increasing, stable, or decreasing
-- Optimization recommendations — specific sources where cost can be reduced without losing coverage
-- Value delivered — incidents caught, threats detected, response time metrics
+- Sources with high ingestion and zero detection coverage flagged
+- Month over month trend
+- Optimization opportunities — what could be reduced without losing coverage
+- Value delivered — incidents detected, response metrics
 
-This section answers: are we being good stewards of their budget.
-
----
-
-### Section 5 — Watchlist Review
-**Do we have the right reference data?**
-
-- Critical assets watchlist — current count, last reviewed date, opportunity for client to review and update
-- Domain controllers watchlist — current list, any changes since last review
-- VIP users watchlist — current list, any changes
-- Any other client-specific watchlists — status and last review
-
-This section answers: is our reference data current and accurate.
+Data source: Usage table, `[mssname]-sources`, `[mssname]-detections`
 
 ---
 
-### Section 6 — Roadmap and Recommendations
-**Where are we going?**
+### Tab 9 — Opportunities and Action Items
+**What is on our radar and what do we want to discuss?**
 
-- Top three recommendations for this quarter — specific, actionable, with expected value
-- Detections available to unlock — what data would enable them
-- Platform improvements planned — what we are working on
-- Industry context — relevant threats to their vertical, how our coverage addresses them
-- Innovation updates — new Microsoft capabilities evaluated or adopted
+- Open items from last audit — status update on each
+- New recommendations this quarter — specific and actionable
+- Detections available to unlock — what data they need
+- Things to clean up or remove
+- Client requests and items they have flagged
+- Open conversation — this tab is the agenda for the discussion
 
-This section answers: what is next and why does it matter.
+Data source: `[mssname]-client` notes, manual input per review
 
 ---
 
-## The Client Profile Watchlist
+## The Watchlist System
 
-You mentioned this and it is exactly right. A watchlist that stores everything you need to know about a client that does not come from Sentinel. The information you reach for when opening a support ticket, writing a client email, or starting an audit review.
+Five watchlists power the entire program. Every piece of data we need lives in one of these five. No redundancy. No overlap. Each one has a clear owner and a clear purpose.
 
-**`[mssname]-client`**
+**The rule for watchlist existence:** A watchlist is only justified if the data changes independently, multiple functions consume it, and it cannot always be derived from a live query.
+
+---
+
+### `[mssname]-tables` — Table Registry
+**Owner:** Platform team
+**Purpose:** One row per table. The backbone. Tells us what tables exist and whether any new ones have appeared. The table is treated as a pipe — just a container. No transport or ingestion details here.
+
+| Field | What Goes Here |
+|---|---|
+| Table | Exact table name |
+| Category | Security category |
+| Description | Plain English — what kind of data lands here |
+| DateAdded | When first documented |
+| Vetted | Yes / No |
+| MonitoringFrequency | None / 1h / 5h / 15h / 24h / 48h |
+| Notes | Anything worth knowing at the table level |
+
+---
+
+### `[mssname]-sources` — Data Source Registry
+**Owner:** Platform team
+**Purpose:** One row per tracked data source within each table. This is where all the detail lives — transport, SLS, functions, connectors, DCR, DCE. Everything needed to monitor, troubleshoot, and report on each specific source.
+
+| Field | What Goes Here |
+|---|---|
+| Table | Links to [mssname]-tables |
+| LogSource | Plain English source name |
+| Origin | What generated this data |
+| Transport | How it gets into Sentinel |
+| Category | Security category |
+| Purpose | One sentence — what does this detect or provide |
+| SLS | Yes / No — is this under our service commitment |
+| RequirementSource | What justifies tracking — OC#####, UEBA, PCI-DSS etc |
+| HasFunction | Yes / No |
+| FunctionName | KQL sub-function name or None |
+| DataConnector | Sentinel connector name if applicable |
+| DCRName | Data Collection Rule name if applicable |
+| DCEName | Data Collection Endpoint name if applicable |
+| SilentDet | AB##### or Missing |
+| MonitoringFrequency | None / 1h / 5h / 15h / 24h / 48h |
+| DateAdded | When first documented |
+| Vetted | Yes / No |
+| Notes | Technical notes, gotchas, environment specific context |
+
+---
+
+### `[mssname]-detections` — Detection Catalog
+**Owner:** Detection team
+**Purpose:** Every custom OC-series detection. What it does, what tables it needs, what watchlists it references, and whether it is security or operational.
+
+| Field | What Goes Here |
+|---|---|
+| RuleId | OC##### unique identifier |
+| AnalyticRule | Full rule name |
+| Table | Comma separated exact table names |
+| Watchlist | Comma separated watchlist names or None |
+| AlertClass | Security / Operational |
+| Description | Plain English what does this catch or monitor |
+
+---
+
+### `[mssname]-dependencies` — Dependency Registry
+**Owner:** Platform team
+**Purpose:** Every external credential, API key, client secret, and OAuth token that keeps data sources running. Tracks expiry dates, rotation owners, and which sources break when something expires.
+
+| Field | What Goes Here |
+|---|---|
+| DependencyName | Plain English credential name |
+| ServiceName | What service this authenticates to |
+| DependencyType | API Key / Client Secret / OAuth Token / Certificate |
+| LinkedSource | Comma separated source names that break if this expires |
+| ExpiryDate | Raw datetime |
+| RotationOwner | Who is responsible for rotating |
+| RotationContact | Their contact information |
+| LastRotated | Raw datetime |
+| AppRegistrationName | Entra ID app registration name if applicable |
+| Notes | Logic App name, Lambda ARN, technical details |
+
+---
+
+### `[mssname]-client` — Client Profile
+**Owner:** Account team
+**Purpose:** Everything you need to know about the client that does not come from Sentinel. Feeds the splash screen, support tickets, and client communications.
 
 | Field | What Goes Here |
 |---|---|
 | ClientName | Full legal name |
 | ShortName | What we call them day to day |
-| Industry | Their vertical — financial services, healthcare, manufacturing etc |
-| Bio | Two to three sentences about who they are and why security matters to them |
+| Industry | Their vertical |
+| Bio | Two to three sentences about who they are |
 | OnboardingDate | When they became a client |
 | TenantID | Azure tenant ID |
 | WorkspaceID | Log Analytics workspace ID |
 | WorkspaceName | Workspace name |
 | SubscriptionID | Primary Azure subscription ID |
-| SentinelURL | Direct link to their Sentinel workspace |
-| SharePointURL | Link to their client folder in SharePoint |
-| ServiceNowURL | Link to their ServiceNow instance or queue |
-| PrimaryContact | Main security contact name and email |
+| SentinelURL | Direct link to Sentinel workspace |
+| SharePointURL | Client folder in SharePoint |
+| ServiceNowURL | ServiceNow instance or queue |
+| PrimaryContact | Main security contact |
 | EscalationContact | Who to call for critical incidents |
-| TechnicalContact | Client IT contact for things like app registrations |
-| SLSDocument | Link to the signed SLS agreement |
-| ComplianceFrameworks | Comma separated list of applicable frameworks |
+| TechnicalContact | Client IT contact |
+| SLSDocument | Link to signed SLS agreement |
+| ComplianceFrameworks | Comma separated applicable frameworks |
 | Notes | Anything else worth knowing |
 
-This watchlist feeds the splash screen of the audit deck automatically. Open the deck and the client context is right there.
+This watchlist feeds the audit deck splash screen automatically.
 
 ---
 
