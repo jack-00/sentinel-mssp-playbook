@@ -224,3 +224,148 @@ KQL string joins are case sensitive by default. Table names in DetectionCatalog 
 ---
 
 *Add new notes here as they come up during development. Reference this file before writing any KQL function, workbook query, or automation logic.*
+
+---
+
+## Shared Table Health Check Architecture — KQL Functions
+
+### The Problem
+Each shared table needs different filter conditions to identify its sub-sources. CommonSecurityLog uses DeviceVendor and DeviceProduct. AzureDiagnostics uses ResourceType and Category. Syslog uses HostName. ThreatIntelIndicators uses SourceSystem. These cannot be standardized at the filter level — they are fundamentally different.
+
+Dynamic KQL execution of stored filter strings is not possible. Storing filter conditions in a watchlist and applying them at query time is fragile and not maintainable at scale.
+
+### The Solution — Standardize the Output Not the Input
+Each shared table gets its own KQL function that handles its specific filter logic internally. Every function returns the exact same four columns regardless of how the data is filtered internally:
+
+```
+Table, LogSource, LastSeen, Status
+```
+
+A master function unions all sub-functions together and joins against LogSourceRegistry for metadata enrichment. The workbook calls the master function only — it never changes regardless of how many shared tables exist.
+
+### The Contract — Every Sub-Function Must Return These Four Columns
+```kql
+// Every shared table sub-function must return this exact schema
+// Table      — exact table name
+// LogSource  — the specific log source category name matching LogSourceRegistry
+// LastSeen   — raw datetime of most recent record for this source
+// Status     — Active / Review / Inactive / Missing / No Data
+```
+
+### Example Sub-Function Structure
+```kql
+// GetAzureDiagnosticsHealth()
+// Returns one row per expected AzureDiagnostics sub-source
+union
+(
+    AzureDiagnostics
+    | where TimeGenerated > ago(24h)
+    | where ResourceType == "AZUREFIREWALLS"
+    | where Category == "AzureFirewallApplicationRule"
+    | summarize LastSeen = max(TimeGenerated)
+    | extend Table = "AzureDiagnostics"
+    | extend LogSource = "Azure Firewall — Application Rule"
+),
+(
+    AzureDiagnostics
+    | where TimeGenerated > ago(24h)
+    | where ResourceType == "VAULTS"
+    | where Category == "AuditEvent"
+    | summarize LastSeen = max(TimeGenerated)
+    | extend Table = "AzureDiagnostics"
+    | extend LogSource = "Azure Key Vault — Audit Events"
+)
+| extend DaysSince = datetime_diff('day', now(), LastSeen)
+| extend Status = case(
+    DaysSince <= 1, "Active",
+    DaysSince <= 7, "Review",
+    DaysSince > 7,  "Inactive",
+    "No Data"
+)
+| project Table, LogSource, LastSeen, Status
+```
+
+### The Master Function Structure
+```kql
+// GetSharedTableHealth()
+// Unions all shared table sub-functions
+// Returns complete health picture for all shared table sub-sources
+// Join against LogSourceRegistry for metadata
+let registry = _GetWatchlist('LogSourceRegistry');
+union
+    GetAzureDiagnosticsHealth(),
+    GetCommonSecurityLogHealth(),
+    GetSyslogHealth(),
+    GetThreatIntelHealth(),
+    GetASimHealth()
+| join kind=fullouter registry on Table, LogSource
+| extend FinalStatus = iff(isnull(LastSeen), "Missing", Status)
+| extend DaysSince = datetime_diff('day', now(), LastSeen)
+| project
+    Table,
+    LogSource,
+    Category,
+    Origin,
+    Transport,
+    Purpose,
+    SilentDet,
+    FinalStatus,
+    LastSeen,
+    DaysSince,
+    Notes
+```
+
+### How to Add a New Shared Table
+1. Write a new sub-function following the exact output schema above
+2. Add the sub-function to the union in GetSharedTableHealth()
+3. Add rows to LogSourceRegistry for each expected sub-source
+4. Done — workbook picks it up automatically via the master function
+
+### Shared Tables That Need Sub-Functions Written
+- AzureDiagnostics — ResourceType + Category
+- CommonSecurityLog — DeviceVendor + DeviceProduct
+- Syslog — HostName
+- ThreatIntelIndicators — SourceSystem
+- ThreatIntelObjects — SourceSystem
+- ASimNetworkSessionLogs — EventVendor + EventProduct
+- ASimAuditEventLogs — EventVendor + EventProduct
+- ASimWebSessionLogs — EventVendor + EventProduct
+- SecurityEvent — single source category, may not need sub-function
+- AzureMetrics — ResourceType + MetricName if needed
+
+### The Fit Check
+The fullouter join in the master function IS the fit check:
+- In LogSourceRegistry but LastSeen is null → Missing — source not reporting
+- LastSeen present but not in LogSourceRegistry → Unknown new source appeared
+- Both present → compare Status
+
+The workbook surfaces this. Analytics rules fire when Missing sources are detected. No separate fit check query needed — it is built into the join.
+
+---
+
+## Logic Apps — Future Automation Thinking
+
+Logic Apps are available and should be considered for automation where KQL functions and watchlists are not sufficient. Current thinking is to get the KQL function and watchlist layer solid first before introducing Logic App complexity.
+
+**Potential Logic App use cases to explore later:**
+- Snapshot pipeline — write DataSourceAudit_CL weekly for Tab 5 Insights
+- New source detector — compare workspace tables against DataSourceInventory, create Flag rows automatically
+- Credential expiry notifications — read IntegrationRegistry, send Teams alerts 30 days before expiry
+- DetectionCatalog sync — trigger Python script run when new rules are deployed
+- Watchlist updates — automate updates to watchlists when source configurations change
+
+**The constraint:** Logic Apps introduce credential management, schedule monitoring, and failure detection overhead. Every Logic App needs its own silent detection. Only introduce them when the automation value clearly outweighs the maintenance burden.
+
+---
+
+## Core Engineering Principles for This Program
+
+Every solution we build must pass these three tests before it is considered complete:
+
+**Repeatable** — Can a different engineer follow the same process and get the same result? If it depends on tribal knowledge or undocumented steps it is not repeatable.
+
+**Standardized** — Does it follow the same pattern as everything else in the system? New shared tables get sub-functions. New watchlists follow the naming convention. New detections follow the AB##### or OC##### convention. Consistency is what makes the system navigable at scale.
+
+**Scalable** — Does adding more clients, more tables, or more detections require rebuilding the system or just adding to it? The master function pattern is scalable — add a sub-function and a union line. Workbook queries that hardcode table names are not scalable.
+
+**Automate where the value justifies the overhead.** Not everything should be automated. Automation adds maintenance burden — schedules to monitor, credentials to rotate, failures to detect. Only automate when the manual alternative is genuinely unsustainable.
