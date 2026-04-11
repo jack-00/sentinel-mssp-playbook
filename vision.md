@@ -450,6 +450,26 @@ The onboarding timeline, checklist, and definition of done will be documented in
 
 ---
 
+## The SharePoint Structure
+
+The SharePoint site is the operational home for all company and client work. It has five root folders each with a clear purpose and clear ownership.
+
+**00-Company** — who we are as a business. Agreements, policies, compliance documentation.
+
+**01-Program** — how we work. Standards, baseline definitions, templates, processes, KQL functions, detections, AI prompts. Everything here applies to every client. This is the SharePoint companion to the GitHub repository.
+
+**02-Clients** — client specific work. Every client folder is identical in structure. A new engineer picks up any client folder and immediately knows where everything is.
+
+**03-Knowledge-Base** — what we know. The internal wiki. Table references, connector guides, compliance requirements, industry verticals, lessons learned. Every time an engineer learns something worth knowing it goes here.
+
+**04-Internal** — team operations. Meeting notes, training, research, ideas.
+
+**05-References** — quick reference. Vendor contacts, Microsoft support, licensing, useful links.
+
+The full structure with all subfolders and governance rules is documented in `01-Program/Standards/sharepoint-governance.md`.
+
+---
+
 ## The Repository Vision
 
 The endgame is managing everything from a repository. Detection changes, watchlist updates, workbook deployments, baseline configurations — all version controlled, all reviewable, all deployable with a command.

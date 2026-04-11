@@ -1,10 +1,10 @@
 # Data Source Audit Runbook
 
-> **Purpose:** This runbook guides an engineer through a complete data source audit for a managed client Microsoft Sentinel environment. The output is a two-tab Excel workbook that becomes the foundation for the data source watchlist, the living workbook, and all ongoing health monitoring.
+> **Purpose:** This runbook guides an engineer through a complete data source audit for a managed client Microsoft Sentinel environment. The primary output is the `[mssname]-tables` watchlist — the table pipe registry that forms the backbone of the entire system. After completing this runbook proceed to `06-watchlist-management/sources-watchlist-build-guide.md` to build the `[mssname]-sources` watchlist.
 >
 > **Who uses this:** Engineers conducting a first-time audit or a periodic re-audit of a client environment.
 >
-> **What you produce:** A completed, sorted, two-tab Excel workbook. Tab 1 becomes the Sentinel watchlist. Tab 2 is the technical configuration reference.
+> **What you produce:** A completed `[mssname]-tables` watchlist uploaded to Sentinel.
 >
 > **Prerequisites:** Complete `01-baseline/license-entitlement-review.md` for this client before starting. Knowing what the client is licensed for tells you what data sources should exist and what capabilities should be enabled.
 >
@@ -14,204 +14,71 @@
 
 ## Understanding the Workspace Before You Audit
 
-A Microsoft Sentinel workspace is not a flat list of data sources. It contains nine distinct types of components that each play a different role. Understanding these categories is what separates a surface-level audit from a complete one. Every field in the audit spreadsheet maps back to this taxonomy.
+A Microsoft Sentinel workspace is not a flat list of data sources. It contains nine distinct types of components that each play a different role. Understanding these categories is what separates a surface-level audit from a complete one.
 
 | Category | What It Is | Examples |
 |---|---|---|
 | **Log Sources** | Specific originators writing data to a table. One table can have many log sources. | Palo Alto PA-3200 → CommonSecurityLog, DC01 → Syslog |
 | **Tables** | Log Analytics destinations where data lands. The ground truth layer. | SignInLogs, CommonSecurityLog, BehaviorAnalytics |
-| **Watchlists** | Static reference data used by detections and capabilities | VIP Users, Critical Assets, Domain Controllers |
+| **Watchlists** | Persistent reference data queryable in KQL at any time. | [mssname]-tables, [mssname]-sources, [mssname]-detections |
 | **Capabilities** | Features depending on multiple sources — UEBA, Threat Feed, Fusion ML | If any dependency breaks the capability degrades silently |
-| **Detections** | Analytics rules that consume table data and produce alerts | AB-series rules, Content Hub rules |
-| **Silent Detections** | Detections that verify each log source is actively sending data | Every log source must have one |
+| **Detections** | Analytics rules that consume table data and produce alerts | OC-series rules, Content Hub rules |
+| **Silent Detections** | Detections that verify each log source is actively sending data | Every tracked source must have one |
 | **Automation** | Logic Apps and playbooks that respond to incidents | Enrichment playbook, ServiceNow ticket creation |
-| **Reports** | Scheduled outputs delivered on a cadence | Logic App reports using watchlists |
-| **Integrations** | API keys and credentials that keep services connected | Threat feed API key, VirusTotal key |
-| **Workbooks** | Interactive live dashboards | Client Security Operations Workbook |
+| **Integrations** | API keys and credentials that keep services connected | Threat feed API key, Zoom API key |
+| **Workbooks** | Interactive live dashboards | Audit Deck Workbook, MSSP Internal Workbook |
 
 ---
 
 ## Why We Audit by Log Source — Not by Connector or Table
 
-Microsoft Sentinel presents data sources through a connector UI that makes it easy to assume that if a connector shows as connected everything is working. This assumption is dangerous and wrong.
+A connector can show green while silently sending nothing. Tables are closer to the truth but still not granular enough. A table like `CommonSecurityLog` can have many different sources writing to it simultaneously. If a Palo Alto firewall stops sending logs but a Fortinet device keeps writing — `CommonSecurityLog` still appears Active. The Palo Alto source is blind.
 
-A connector is a configuration wizard. It helps you enable a data source but it does not guarantee data is actually flowing, that all log categories are enabled, that the correct tables are being written to, or that volume is healthy. A connector can show green while silently sending nothing.
+**The log source is the correct audit unit.** One row per originating source category. This is the only level of granularity that catches individual source failures before they cause missed detections.
 
-Tables are closer to the truth but still not granular enough. A table like `CommonSecurityLog` or `Syslog` can have many different sources writing to it simultaneously. If a Palo Alto firewall stops sending logs but a Fortinet device keeps writing — `CommonSecurityLog` still appears Active. The Palo Alto source is blind and you will never know from the table level alone.
-
-**The log source is the correct audit unit.** One row per originating source category. One status per source. This is the only level of granularity that catches individual source failures before they cause missed detections.
-
-**Important distinction — log source category vs individual device:**
-A log source is not every individual machine or device. It is the category of thing writing to the table. Fifty Windows machines sending data to SecurityEvent via AMA is one log source — Windows Security Events via AMA. We only create separate rows when fundamentally different things are writing to the same table — for example a Palo Alto firewall and a Fortinet VPN both writing to CommonSecurityLog are two different log sources because they are different vendors with different purposes and different detection value.
+**The two-watchlist approach:**
+This runbook produces `[mssname]-tables` — one row per table, the pipe registry. The sources watchlist build guide produces `[mssname]-sources` — one row per log source within each table, where all monitoring detail lives. Both are needed. Do this one first.
 
 ---
 
-## Log Source Inclusion Criteria
+## The Two Watchlists and Their Relationship
 
-Not every source within a shared table deserves its own row in the watchlist. Documenting everything you find in a breakout query creates noise, adds maintenance burden, and makes the workbook harder to read — with no security return.
+**`[mssname]-tables`** — what this runbook produces:
+- One row per table
+- Five fields — lean, purposeful, stable
+- Catches new unknown tables appearing in the workspace
+- Vetted = No flags tables that need investigation
 
-**The core rule:**
-
-> A log source gets its own row only if losing it would matter.
-
-Before creating a row for any source ask yourself — if this specific source went silent tomorrow would anyone care? Would a detection go blind? Would a capability degrade? Would a compliance obligation go unmet?
-
-If the answer is no to all of those — it does not need a row.
-
-**A source earns a row if it meets at least one of these criteria:**
-
-- A detection actively queries this source — losing it creates a blind spot
-- A capability depends on it — UEBA, Threat Intelligence, Fusion ML
-- A compliance obligation requires it to be continuously monitored
-- It has meaningful investigation or threat hunting value
-- It is a custom integration that could break silently without obvious indication
-
-**A source does not need a row if:**
-
-- No detection queries it
-- No compliance obligation requires it
-- It has no investigation value
-- Losing it would not change your detection coverage or create a gap
-- It is a metric or counter rather than a security event
-
-**Practical examples of what to skip:**
-
-- AzureDiagnostics from Logic Apps — workflows/runs/actions, workflows/runs/triggers. Unless you have detections querying Logic App diagnostic logs or a compliance requirement, a brief note in the Notes column of the relevant AzureActivity row is enough. No dedicated rows needed.
-- AzureDiagnostics NSG rule counters — NetworkSecurityGroupRuleCounter. This is a metric counter not a security event. Document NSG Flow Events if present but skip the counter.
-- CommonSecurityLog from a vendor sending only system health events — if those events feed no detection and have no hunting value, skip the row.
-- Syslog from a host sending only cron or kernel messages with no auth facility — low value, no detection dependency, skip it.
-
-**What to do with sources you are skipping:**
-
-Do not just ignore them. If a breakout query returns a source you are not documenting as its own row add a brief note to the parent table Notes column — for example "AzureDiagnostics also receives Logic App runtime logs — no detection dependency, not tracked." This tells future engineers that you saw it and made a deliberate decision not to track it rather than missing it.
-
-**The goal:**
-
-A lean, intentional watchlist where every row earns its place. When someone opens the workbook and sees a row they should be able to immediately understand why that source is being tracked and what breaks if it goes silent. If you cannot answer that question for a row it probably should not be there.
+**`[mssname]-sources`** — what the sources build guide produces:
+- One row per log source within each table
+- Fifteen fields — all monitoring, transport, SLS, functions
+- Drives the workbook data sources tab and silent detections
+- Every table in [mssname]-tables gets at least one row here
 
 ---
 
-## The Spreadsheet Structure
+## The Tables Watchlist — Field Set
 
-The audit produces a two-tab Excel workbook. Understanding both tabs before you start is important.
+**`[mssname]-tables` fields — in this exact order:**
 
-### Tab 1 — Data Sources
-The operational view. Becomes the Sentinel watchlist that powers the living workbook. Every row is a log source. Keep it clean, accurate, and purposeful. This is what drives the workbook, the watchlist, and the client conversation.
-
-**Final column set — in this exact order:**
-
-| # | Column | What Goes Here |
-|---|---|---|
-| 1 | Table | Exact Log Analytics table name — never modify |
-| 2 | Status | Current health — plain text from approved list. Stored in watchlist as audit snapshot. Workbook recalculates live from workspace queries — do not rely on watchlist Status in workbook logic. |
-| 3 | LastSeen | Raw datetime of most recent record. No formatting — raw datetime value only. Excel formats the column for display. Workbook queries wrap with todatetime() when reading from watchlist. |
-| 4 | DaysSinceLastLog | Days since last record — calculated by query for audit reference only. Do NOT include in watchlist upload. Workbook calculates this live from LastSeen at query time. |
-| 5 | LogSource | Plain English description of what writes to this table |
-| 6 | Origin | What generated this data — from approved list |
-| 7 | Transport | How data gets into Sentinel — from approved list |
-| 8 | Category | Type of security data — from approved list |
-| 9 | Purpose | One sentence — what attack or risk does this detect |
-| 10 | SilentDet | AB##### of the silent detection monitoring this source |
-| 11 | Detections | AB##### numbers of detections that depend on this source |
-| 12 | Notes | Issues, action items, context, exceptions |
-
-### Tab 2 — Configuration
-Technical reference. Engineer-facing only. Never shown to clients. Documents the exact technical wiring behind each log source. Linked to Tab 1 by Table and LogSource.
-
-| Column | What Goes Here |
+| Field | What Goes Here |
 |---|---|
-| Table | Exact table name — matches Tab 1 |
-| LogSource | Log source — matches Tab 1 |
-| Data Connector | Sentinel data connector name if applicable |
-| Connector Status | Connected / Disconnected / Not Applicable |
-| DCR Name | Data Collection Rule name if AMA-based |
-| DCE Name | Data Collection Endpoint name if applicable |
-| Diagnostic Setting | Diagnostic setting name if Azure resource log |
-| Subscription | Azure subscription name |
-| Workspace | Log Analytics workspace name |
-| License Required | License needed for this source |
-| Notes | Technical notes, issues, last verified date |
+| Table | Exact Log Analytics table name — never modify |
+| Category | Type of security data — from approved list |
+| Details | Broad context about this table — shared table, ASIM, single source, what kind of data lands here |
+| Vetted | Yes / No — has this table been investigated and classified |
+| Notes | Issues, action items, context, observations |
+
+**What is deliberately not in this watchlist:**
+- Status, LastSeen, DaysSinceLastLog — calculated live by functions, never stored
+- Transport, Origin, Purpose — live at the source level in [mssname]-sources
+- SilentDet, Detections — live at the source level in [mssname]-sources
 
 ---
 
 ## Approved Field Values
 
-### Status — Plain Text Only
-No emojis. Plain text is watchlist-compatible and cleanly queryable in KQL. Emojis in watchlist field values cause matching problems in KQL queries.
-
-| Status | Meaning | Who Assigns |
-|---|---|---|
-| Active | Data flowing within expected timeframe. No action needed. | Query |
-| Inactive | Had data, now silent. Investigate immediately. Document cause in Notes. | Query |
-| Review | Data flowing but something warrants attention. Volume anomaly, partial config, or inconsistent timestamps. | Query or Manual override |
-| No Data | Never received data. Document in Notes whether not applicable or never configured. | Manual |
-| Missing | Expected based on connector or license but not found in workspace. Connector may be enabled but never sent data. | Manual |
-| Decom | Marked for retirement. Do not delete — mark Decom with date and reason in Notes. | Manual only |
-
-**Note on Flag status:** Flag is reserved for the future automation pipeline. When the snapshot Logic App detects a new table between snapshots it will assign Flag automatically. During a manual audit you classify everything as you go — you will never assign Flag manually. It is documented here so engineers understand it when they encounter it in the future.
-
-**Status guidance by source type:**
-- Identity sources — data expected every few minutes. More than 4 hours → Review. More than 24 hours → Inactive.
-- Endpoint sources — depend on device activity. No data 48 hours in business environment → Inactive.
-- Firewall and network — near-continuous. More than 6 hours → Review. More than 24 hours → Inactive.
-- Threat intelligence — may update daily or less. Check vendor cadence before marking Inactive.
-- UEBA output tables — continuous once past the 14-21 day baseline period.
-
----
-
-### Origin — What Generated This Data
-
-| Origin | Use For |
-|---|---|
-| Microsoft Entra ID | All identity and access logs — sign-ins, audit, identity protection, provisioning |
-| Microsoft 365 | All M365 workload logs — SharePoint, OneDrive, Exchange, Teams, admin activity |
-| Microsoft Defender | All Defender product logs — MDE, MDO, MDI, MDA, MDC |
-| Microsoft Azure | Azure Activity, resource diagnostics, Azure Monitor, storage, Key Vault |
-| Microsoft Sentinel | Incidents, alerts, health, audit, UEBA output, threat intelligence |
-| Windows OS | Windows Security Event Log generated by Windows machines |
-| Network Device | Firewalls, routers, switches, VPN concentrators |
-| AWS | Amazon Web Services logs |
-| Salesforce | Salesforce platform logs |
-| Zoom | Zoom meeting and user activity logs |
-| Keeper Security | Keeper PAM and password manager logs |
-| SecureW2 | SecureW2 certificate authentication and NAC logs |
-| Drupal | Drupal CMS application logs |
-| Multiple Sources | ASIM tables fed by more than one origin |
-| Custom | Built by your team — no external origin |
-| Unknown | Not yet identified — investigate and update |
-
----
-
-### Transport — How Data Gets Into Sentinel
-
-| Transport | What It Means | When to Use |
-|---|---|---|
-| Microsoft Connector | Native Microsoft service-to-service. No agent or DCR needed. Configured in Sentinel data connectors page. | Entra ID, Office 365, Azure Activity, Defender for Cloud |
-| XDR Connector | Flows through the Microsoft Defender XDR unified connector. Requires XDR connector enabled in Sentinel. | DeviceEvents, EmailEvents, CloudAppEvents, IdentityLogonEvents |
-| AMA — DCR | Azure Monitor Agent on a host shipping via a Data Collection Rule. Both AMA and DCR must be healthy. | SecurityEvent, Syslog, Heartbeat, Perf |
-| AMA — DCR — DCE | AMA shipping via DCR with a custom Data Collection Endpoint. Used for specific routing requirements. | Custom AMA configurations |
-| CEF — AMA — DCR | Network device sends CEF/Syslog to a Linux forwarder VM. Forwarder runs AMA and ships via DCR. Three components must all be healthy. | CommonSecurityLog from firewalls |
-| Cribl — AMA — DCR | Logs routed through Cribl for filtering and transformation then shipped via AMA and DCR. | Varies by environment |
-| Cribl — DCR | Logs routed through Cribl sent directly via DCR without AMA. | Varies by environment |
-| Diagnostic Setting | Azure resource diagnostic setting routing logs directly to the workspace. Configured per resource in Azure portal. | StorageBlobLogs, AzureDiagnostics, KeyVaultData |
-| Logic App — Polling | Logic App running on a schedule polling an API and ingesting results. | KeeperLogs_CL, Zoom_CL, Salesforce tables |
-| Logic App — Webhook | Logic App triggered by an incoming webhook from an external source. | Varies |
-| REST API — Push | External source pushing data directly via the Log Ingestion API. | Custom_CL tables |
-| TAXII — Polling | Threat intelligence connector polling a TAXII server for IOC feeds. | ThreatIntelIndicators, ThreatIntelObjects |
-| Sentinel Native | Produced internally by Sentinel itself. No external transport. | SentinelHealth, SentinelAudit, SecurityIncident, SecurityAlert |
-| ASIM Parser | Data normalized from raw tables at query or ingestion time. Health depends entirely on source table health. | ASimNetworkSessionLogs, ASimAuditEventLogs |
-
-**Why Transport detail matters:**
-When something breaks you go to a completely different place depending on the transport:
-- AMA — DCR broken → Check Azure Monitor → Data Collection Rules. Check AMA extension on host. Check Heartbeat.
-- CEF — AMA — DCR broken → Check forwarder VM, then AMA on forwarder, then firewall Syslog destination. Three places.
-- Logic App — Polling broken → Check Logic App run history. Check API credentials expiry.
-- Microsoft Connector broken → Check connector page in Sentinel. Check diagnostic settings in source service.
-- ASIM Parser degraded → Check the source tables it feeds from. Fix the source, ASIM recovers.
-
----
-
-### Category — Security Domain
+### Category
 
 | Category | Use For |
 |---|---|
@@ -226,58 +93,52 @@ When something breaks you go to a completely different place depending on the tr
 | Compliance and Audit | M365 audit logs, Sentinel health and audit, regulatory compliance |
 | Vulnerability Management | Scanner results, CVE data, asset risk scoring |
 | Authentication | MFA, SSO, PAM, privileged access management |
-| Capabilities | Tables produced by capabilities — UEBA output, Fusion ML. Not raw inputs. |
+| Capabilities | Tables produced by capabilities — UEBA output, Fusion ML |
 | Other | Does not fit above — explain in Notes |
 
----
+### Vetted
 
-### Detections — Format
+| Value | Meaning |
+|---|---|
+| Yes | Table has been investigated — Category and Details are accurate |
+| No | Table appeared and has not yet been fully investigated |
 
-AB numbers only. No detection names in this field. The detection library has the full names. The watchlist needs the IDs so KQL can match against them cleanly.
+Set Vetted = No for any table you cannot fully classify during the audit. Come back to it — do not leave it blank.
 
-**Correct:** `AB00034, AB00041, AB00055`
-**Incorrect:** `AB00034 - Impossible Travel Detection, AB00041 - Legacy Auth Detection`
+### Details — Format
 
-If no custom detections depend on this source write `None`.
+Two to three sentences maximum. Describes what kind of data lands in this table at a broad level. For shared tables note that multiple sources write here. For ASIM tables note that health depends on source tables.
 
----
+**Good:** `Shared table. Receives CEF format logs from network devices via a Linux forwarder running AMA. Palo Alto Networks firewalls and Fortinet VPN appliances both write here.`
 
-### Purpose — Format
+**Good:** `ASIM normalized network session logs. Health depends entirely on the source tables feeding the parsers — primarily CommonSecurityLog and AzureFirewallDnsProxy.`
 
-One sentence maximum. Written for a business audience not a technical one. Answers the question: what attack or risk would be invisible if this data source disappeared?
-
-**Good:** `Detects compromised accounts, password spray attacks, impossible travel, and MFA fatigue across all user sign-in activity.`
-**Poor:** `This table contains sign-in logs.`
+**Poor:** `Firewall logs.`
 
 ---
 
 ## The Audit Workflow
 
-Work through all steps in order. Do not skip ahead.
+Work through all steps in order.
 
 - [ ] **Step 0** — Complete license-entitlement-review.md for this client
 - [ ] **Step 1** — Run the main table inventory query
-- [ ] **Step 2** — Run shared table breakout queries where applicable
-- [ ] **Step 3** — Run the Usage volume query
-- [ ] **Step 4** — Export all results and open in Excel
-- [ ] **Step 5** — Merge breakout rows correctly and format as Excel Table
-- [ ] **Step 6** — Save as dated workbook and upload to SharePoint
-- [ ] **Step 7** — Fill in all manual fields
-- [ ] **Step 8** — Complete Tab 2 configuration reference
-- [ ] **Step 9** — Run Phase 3 verification for every Active source
-- [ ] **Step 10** — Document all non-Active sources in Notes
-- [ ] **Step 11** — Sort alphabetically by Table then LogSource
-- [ ] **Step 12** — Upload Tab 1 as the DataSourceInventory watchlist
+- [ ] **Step 2** — Export results and open in Excel
+- [ ] **Step 3** — Format as Excel Table
+- [ ] **Step 4** — Save as dated workbook and upload to SharePoint
+- [ ] **Step 5** — Fill in all manual fields
+- [ ] **Step 6** — Run Usage volume query — add volume to Notes
+- [ ] **Step 7** — Sort alphabetically by Table
+- [ ] **Step 8** — Upload as [mssname]-tables watchlist
+- [ ] **Step 9** — Proceed to sources watchlist build guide
 
 ---
 
 ## Step 1 — Main Table Inventory Query
 
-Run this in the Microsoft Sentinel Logs blade. Returns every table that has ever received data including tables that went silent months ago.
+Run this in the Microsoft Sentinel Logs blade. Returns every table that has ever received data.
 
-**First run instruction:** Remove the time filter entirely on the first audit for a client. You want every table that has ever existed. On subsequent audits keep the 30-day filter.
-
-**Status values are plain text** — no emojis. Watchlist compatible and cleanly queryable.
+**First run instruction:** Remove the time filter entirely on the first audit. You want every table that has ever existed. On subsequent audits keep the 30-day filter.
 
 ```kql
 // ============================================================
@@ -292,205 +153,141 @@ search *
     TotalRecords = count()
     by $table
 | extend DaysSinceLastLog = datetime_diff('day', now(), LastSeen)
-| extend Status = case(
+| extend CurrentStatus = case(
     DaysSinceLastLog <= 1, "Active",
     DaysSinceLastLog <= 7, "Review",
     DaysSinceLastLog > 7,  "Inactive",
     "No Data"
 )
-// ── Manual fields — fill these in after export ───────────────
-| extend LogSource =  "[Manual] — Plain English description e.g. Windows Security Events via AMA, Microsoft Entra ID Sign-in Logs"
-| extend Origin =     "[Manual] — Microsoft Entra ID / Microsoft 365 / Microsoft Defender / Microsoft Azure / Microsoft Sentinel / Windows OS / Network Device / AWS / Salesforce / Zoom / Keeper Security / SecureW2 / Drupal / Multiple Sources / Custom / Unknown"
-| extend Transport =  "[Manual] — Microsoft Connector / XDR Connector / AMA — DCR / AMA — DCR — DCE / CEF — AMA — DCR / Cribl — AMA — DCR / Cribl — DCR / Diagnostic Setting / Logic App — Polling / Logic App — Webhook / REST API — Push / TAXII — Polling / Sentinel Native / ASIM Parser"
-| extend Category =   "[Manual] — Identity / Endpoint / Email / Network / Firewall / Cloud Infrastructure / SaaS Application / Threat Intelligence / Compliance and Audit / Vulnerability Management / Authentication / Capabilities / Other"
-| extend Purpose =    "[Manual] — One sentence: what attack or risk does this data help detect? Write for a business audience."
-| extend SilentDet =  "[Manual] — AB##### or Missing if none exists"
-| extend Detections = "[Manual] — AB#####, AB##### or None"
-| extend Notes =      "[Manual] — Issues, action items, context. Date stamp action items."
+// ── Manual fields — fill these in after export ────────────────
+| extend Category = "[Manual] — Identity / Endpoint / Email / Network / Firewall / Cloud Infrastructure / SaaS Application / Threat Intelligence / Compliance and Audit / Vulnerability Management / Authentication / Capabilities / Other"
+| extend Details =  "[Manual] — Broad context about this table. Is it shared? ASIM? Single source? What kind of data lands here?"
+| extend Vetted =   "No"
+| extend Notes =    "[Manual] — Observations, action items, context"
 // ─────────────────────────────────────────────────────────────
 | project
     Table = $table,
-    Status,
+    CurrentStatus,
     LastSeen,
     DaysSinceLastLog,
-    LogSource,
-    Origin,
-    Transport,
     Category,
-    Purpose,
-    SilentDet,
-    Detections,
+    Details,
+    Vetted,
     Notes
-| order by Status asc, LastSeen desc
+| order by CurrentStatus asc, LastSeen desc
 ```
+
+**Note on CurrentStatus and DaysSinceLastLog:**
+These are included in the query output for your reference during the audit — they help you prioritize which tables need attention. Do NOT include them in the watchlist upload. Delete these columns before uploading. The workbook calculates both live from the workspace at query time.
 
 **Reading the output:**
-- Every row is a table — this is your row list
-- Status is auto-assigned based on DaysSinceLastLog — override manually if needed for the source type
-- Sorted by Status first so Inactive and Review appear at the top — deal with those first
-- All [Manual] fields need to be filled in after export
+- Sorted by CurrentStatus first — Inactive and Review at the top
+- Deal with inactive and review tables first — these are gaps
+- Every [Manual] field must be replaced before upload
 
 ---
 
-## Step 2 — Shared Table Breakout Queries
+## Step 2 — Export Results
 
-Some tables receive data from multiple fundamentally different sources. The main query returns one row per table which is not granular enough. Run the breakout for any shared table that appeared in Step 1.
-
-**The three shared tables to always check:**
-- `CommonSecurityLog` — firewalls, network devices, any CEF source
-- `Syslog` — Linux machines, network appliances, any Syslog source
-- `SecurityEvent` — Windows machines via AMA
-
-**How to use breakout results:**
-1. Find the single shared table row in your main query output
-2. Delete that row entirely
-3. Paste the breakout rows in its place
-4. Each breakout row already has the correct Table value
-5. LogSource differentiates each source
+Export the query output from the Logs blade using the Export button. Save the CSV.
 
 ---
 
-### Breakout A — CommonSecurityLog
+## Step 3 — Format as Excel Table
 
-```kql
-// CommonSecurityLog BREAKOUT — One row per vendor and product
-CommonSecurityLog
-| where TimeGenerated > ago(30d)
-| summarize
-    LastSeen = max(TimeGenerated),
-    TotalRecords = count()
-    by DeviceVendor, DeviceProduct
-| extend DaysSinceLastLog = datetime_diff('day', now(), LastSeen)
-| extend Status = case(
-    DaysSinceLastLog <= 1, "Active",
-    DaysSinceLastLog <= 7, "Review",
-    DaysSinceLastLog > 7,  "Inactive",
-    "No Data"
-)
-| extend Table = "CommonSecurityLog"
-| extend LogSource = strcat(DeviceVendor, " — ", DeviceProduct)
-| extend Origin =     "[Manual] — Network Device or specific vendor name"
-| extend Transport =  "CEF — AMA — DCR"
-| extend Category =   "[Manual] — Firewall / Network / Other"
-| extend Purpose =    "[Manual] — What does this specific device log help detect?"
-| extend SilentDet =  "[Manual] — AB##### or Missing"
-| extend Detections = "[Manual] — AB#####, AB##### or None"
-| extend Notes =      "[Manual] — Document forwarder VM name and IP"
-| project
-    Table,
-    Status,
-    LastSeen,
-    DaysSinceLastLog,
-    LogSource,
-    Origin,
-    Transport,
-    Category,
-    Purpose,
-    SilentDet,
-    Detections,
-    Notes
-| order by DeviceVendor asc
+1. Open the CSV in Excel
+2. Click any cell in the data
+3. Press **Ctrl+T**
+4. Confirm My table has headers is checked
+5. Click OK
+6. Go to Home → Format → AutoFit Column Width
+
+---
+
+## Step 4 — Save and Upload to SharePoint
+
+Save as:
+```
+[ClientName]-tables-audit-[YYYY-MM-DD].xlsx
 ```
 
----
-
-### Breakout B — Syslog
-
-```kql
-// Syslog BREAKOUT — One row per host
-Syslog
-| where TimeGenerated > ago(30d)
-| summarize
-    LastSeen = max(TimeGenerated),
-    TotalRecords = count()
-    by HostName
-| extend DaysSinceLastLog = datetime_diff('day', now(), LastSeen)
-| extend Status = case(
-    DaysSinceLastLog <= 1, "Active",
-    DaysSinceLastLog <= 7, "Review",
-    DaysSinceLastLog > 7,  "Inactive",
-    "No Data"
-)
-| extend Table = "Syslog"
-| extend LogSource = HostName
-| extend Origin =     "[Manual] — Windows OS for AMA Linux / specific appliance vendor"
-| extend Transport =  "AMA — DCR"
-| extend Category =   "[Manual] — Endpoint / Network / Identity / Other"
-| extend Purpose =    "[Manual] — What does this host log help detect?"
-| extend SilentDet =  "[Manual] — AB##### or Missing"
-| extend Detections = "[Manual] — AB#####, AB##### or None"
-| extend Notes =      "[Manual] — Note host role e.g. Domain Controller, CEF Forwarder, App Server"
-| project
-    Table,
-    Status,
-    LastSeen,
-    DaysSinceLastLog,
-    LogSource,
-    Origin,
-    Transport,
-    Category,
-    Purpose,
-    SilentDet,
-    Detections,
-    Notes
-| order by HostName asc
+Upload to the client SharePoint folder at:
+```
+02-Clients/[ClientName]/04-Watchlists/Current/
 ```
 
----
-
-### Breakout C — SecurityEvent
-
-```kql
-// SecurityEvent BREAKOUT
-// SecurityEvent is a single log source category — Windows machines via AMA
-// Do NOT create one row per machine
-// This query shows enrollment scope for Notes documentation
-SecurityEvent
-| where TimeGenerated > ago(30d)
-| summarize
-    LastSeen = max(TimeGenerated),
-    TotalRecords = count(),
-    MachineCount = dcount(Computer),
-    Machines = make_set(Computer, 50)
-    by Type
-| extend DaysSinceLastLog = datetime_diff('day', now(), LastSeen)
-| extend Status = case(
-    DaysSinceLastLog <= 1, "Active",
-    DaysSinceLastLog <= 7, "Review",
-    DaysSinceLastLog > 7,  "Inactive",
-    "No Data"
-)
-| extend Table =      "SecurityEvent"
-| extend LogSource =  "Windows Security Events via AMA"
-| extend Origin =     "Windows OS"
-| extend Transport =  "AMA — DCR"
-| extend Category =   "Endpoint"
-| extend Purpose =    "Detects authentication attacks, lateral movement, privilege escalation, and persistence across Windows machines"
-| extend SilentDet =  "[Manual] — AB##### or Missing"
-| extend Detections = "[Manual] — AB#####, AB##### or None"
-| extend Notes = strcat("[Manual — add issues] Enrolled machines: ", tostring(MachineCount), " — verify critical Event IDs in Phase 3")
-| project
-    Table,
-    Status,
-    LastSeen,
-    DaysSinceLastLog,
-    LogSource,
-    Origin,
-    Transport,
-    Category,
-    Purpose,
-    SilentDet,
-    Detections,
-    Notes
-```
-
-**Note:** SecurityEvent pre-fills most fields because it is always the same log source regardless of environment. One row covers the entire table.
+Do this before filling in any manual fields. This is your unmodified baseline snapshot.
 
 ---
 
-## Step 3 — Usage Volume Query
+## Step 5 — Fill In Manual Fields
 
-Run separately to get ingestion volume in GB per table. Keep the export open alongside your spreadsheet and add volume to the Notes column for context.
+Every [Manual] placeholder must be replaced. Use the pre-populated reference below for common Microsoft tables.
+
+**Before filling in Details — check for shared tables:**
+For any shared table run the appropriate breakout query from `resources/scratch.md` to understand what sources are writing to it. Use that knowledge to write the Details field accurately. The breakout queries are in the scratch file — AzureDiagnostics, CommonSecurityLog, Syslog, ThreatIntelIndicators, and all ASIM tables.
+
+---
+
+### Pre-Populated Reference — Common Tables
+
+| Table | Category | Details | Vetted |
+|---|---|---|---|
+| SignInLogs | Identity | Single source. Microsoft Entra ID interactive sign-in logs. Every user sign-in attempt flows through here including successful, failed, and MFA-challenged authentications. | Yes |
+| AADNonInteractiveUserSignInLogs | Identity | Single source. Non-interactive sign-ins — service-to-service authentication, token refresh, and background processes that authenticate without direct user involvement. | Yes |
+| AADServicePrincipalSignInLogs | Identity | Single source. Service principal and application sign-ins. Applications, automation, and services authenticating to Azure AD resources. | Yes |
+| AADManagedIdentitySignInLogs | Identity | Single source. Managed identity authentications from Azure resources authenticating to other services without stored credentials. | Yes |
+| AuditLogs | Identity | Single source. Microsoft Entra ID directory audit events — role assignments, group changes, app registrations, conditional access policy changes. | Yes |
+| AADRiskyUsers | Identity | Single source. Entra ID Identity Protection risky user signals — accounts flagged by Microsoft ML as potentially compromised. Requires Entra ID P2. | Yes |
+| AADUserRiskEvents | Identity | Single source. Individual risk event detections per sign-in from Identity Protection. Requires Entra ID P2. | Yes |
+| OfficeActivity | Compliance and Audit | Single source. Microsoft 365 Unified Audit Log covering SharePoint, OneDrive, Exchange, Teams, and admin operations across all M365 workloads. | Yes |
+| AzureActivity | Cloud Infrastructure | Single source. Azure management plane activity — resource creation, deletion, role assignments, policy changes, and all ARM operations. | Yes |
+| SecurityAlert | Cloud Infrastructure | Single source. Consolidated alert feed from all connected Microsoft security products flowing into Sentinel. | Yes |
+| SecurityIncident | Cloud Infrastructure | Single source. All Sentinel and XDR incidents including multi-stage correlated incidents from Fusion ML. Primary source for ServiceNow ticket pipeline. | Yes |
+| BehaviorAnalytics | Capabilities | Single source. UEBA behavioral anomaly output produced by Sentinel ML. Requires 14-21 day baseline period before meaningful output begins. | Yes |
+| IdentityInfo | Capabilities | Single source. Enriched user identity data from Entra ID and on-premises AD used by detections for user context enrichment. | Yes |
+| ThreatIntelIndicators | Threat Intelligence | Shared table. Multiple feeds write here identified by SourceSystem field. Each feed gets its own row in [mssname]-sources. Always filter on ExpirationDateTime > now() in any query. | Yes |
+| ThreatIntelObjects | Threat Intelligence | Shared table. STIX 2.1 structured threat intelligence objects. Multiple feeds write here identified by SourceSystem. | Yes |
+| Heartbeat | Endpoint | Single source. Azure Monitor Agent heartbeat — one per minute per enrolled machine. Primary mechanism for detecting AMA agent and machine availability. | Yes |
+| SentinelHealth | Compliance and Audit | Single source. Microsoft Sentinel operational health for analytics rules, connectors, and automation. Critical for detecting silent failures before clients notice. | Yes |
+| SentinelAudit | Compliance and Audit | Single source. All configuration changes to the Sentinel workspace — who changed what and when. | Yes |
+| SecurityEvent | Endpoint | Single source. Windows Security Event Log from all enrolled machines via AMA. One row in sources covers the whole table regardless of how many machines are enrolled. | Yes |
+| CommonSecurityLog | Firewall | Shared table. Receives CEF format logs from network devices via a Linux forwarder running AMA. Each vendor and product combination gets its own row in [mssname]-sources. Run the CommonSecurityLog breakout query to identify all sources. | Yes |
+| Syslog | Endpoint | Shared table. Linux system logs and appliance logs. Each distinct host or appliance category gets its own row in [mssname]-sources. Run the Syslog breakout query to identify all sources. | Yes |
+| AzureDiagnostics | Cloud Infrastructure | Shared table. Aggregated diagnostic logs from multiple Azure resources — Key Vault, Azure Firewall, NSG, App Service, and others. Each ResourceType and Category combination may need its own row in [mssname]-sources. Run the AzureDiagnostics breakout queries. | Yes |
+| AzureMetrics | Cloud Infrastructure | Shared table. Performance and health metrics from Azure resources. Multiple ResourceTypes write here. Primarily operational value — assess whether any detections depend on it before adding to sources. | Yes |
+| ASimNetworkSessionLogs | Network | Shared table. ASIM normalized network sessions. Health depends entirely on source tables feeding the parsers. Run the ASIM breakout query to identify contributing sources. | Yes |
+| ASimAuditEventLogs | Compliance and Audit | Shared table. ASIM normalized audit events. Health depends entirely on source tables. | Yes |
+| ASimWebSessionLogs | Network | Shared table. ASIM normalized web sessions. Health depends entirely on source tables. | Yes |
+| CloudAppEvents | SaaS Application | Single source. Microsoft Defender for Cloud Apps events from enrolled SaaS applications. Requires XDR connector. | Yes |
+| DeviceEvents | Endpoint | Single source. Microsoft Defender for Endpoint device events — process, network, file, and registry activity from enrolled devices. Requires XDR connector. | Yes |
+| DeviceNetworkEvents | Endpoint | Single source. Network activity from MDE enrolled devices. Requires XDR connector. | Yes |
+| DeviceLogonEvents | Endpoint | Single source. Logon events from MDE enrolled devices. Requires XDR connector. | Yes |
+| DeviceProcessEvents | Endpoint | Single source. Process creation events from MDE enrolled devices. Requires XDR connector. | Yes |
+| DeviceFileEvents | Endpoint | Single source. File system events from MDE enrolled devices. Requires XDR connector. | Yes |
+| DeviceRegistryEvents | Endpoint | Single source. Registry modification events from MDE enrolled devices. Requires XDR connector. | Yes |
+| DeviceImageLoadEvents | Endpoint | Single source. DLL and module load events from MDE enrolled devices. Requires XDR connector. | Yes |
+| DeviceFileCertificateInfo | Endpoint | Single source. File signing certificate data from MDE enrolled devices. Requires XDR connector. | Yes |
+| DeviceNetworkInfo | Endpoint | Single source. Network adapter and configuration data from MDE enrolled devices. Requires XDR connector. | Yes |
+| DeviceInfo | Endpoint | Single source. Device inventory and enrollment status from MDE. Requires XDR connector. | Yes |
+| EmailEvents | Email | Single source. Email flow events from Microsoft Defender for Office 365. Requires XDR connector. | Yes |
+| EmailAttachmentInfo | Email | Single source. Email attachment data from MDO. Requires XDR connector. | Yes |
+| EmailUrlInfo | Email | Single source. URL data from emails processed by MDO. Requires XDR connector. | Yes |
+| EmailPostDeliveryEvents | Email | Single source. Post-delivery threat detections from MDO including detonation results. Requires XDR connector. | Yes |
+| UrlClickEvents | Email | Single source. User click events on URLs in email and Teams from MDO. Requires XDR connector. | Yes |
+| IdentityLogonEvents | Identity | Single source. Authentication events against on-premises Active Directory from Microsoft Defender for Identity. Requires XDR connector. | Yes |
+| StorageBlobLogs | Cloud Infrastructure | Single source. Azure Storage blob access logs. Configured via diagnostic setting on each storage account. | Yes |
+| Perf | Endpoint | Single source. Performance counters from AMA-enrolled machines — CPU, memory, disk utilization. | Yes |
+| Anomalies | Capabilities | Single source. ML-detected behavioral anomalies from Sentinel fusion and anomaly detection rules. | Yes |
+| UserPeerAnalytics | Capabilities | Single source. UEBA peer group analysis data used to detect deviations from peer behavior. | Yes |
+| Usage | Compliance and Audit | Single source. Log Analytics ingestion and billing data per table. Operational tool — use for cost analysis in workbook ingestion tab. | Yes |
+| AWSCloudTrail | Cloud Infrastructure | Single source. AWS CloudTrail API activity logs. Requires AWS connector configured. | Yes |
+
+---
+
+## Step 6 — Usage Volume Query
+
+Run this separately to get ingestion volume per table. Add the daily volume to the Notes column for each table row.
 
 ```kql
 // USAGE VOLUME — Run separately
@@ -514,259 +311,67 @@ Usage
 | order by TotalGB_30Days desc
 ```
 
-Add daily volume to the Notes column for each table — for example `Daily Vol: 2.4 GB`. This surfaces high-volume tables with no detections as cost optimization candidates.
+Add to Notes as: `Daily Vol: 2.4 GB`. High-volume tables with no detections are cost optimization candidates — flag them.
 
 ---
 
-## Steps 4-6 — Export, Format, and Save
+## Step 7 — Sort Alphabetically
 
-**Step 4 — Export results**
-Export each query from the Logs blade using the Export button. You will have up to four CSVs — main inventory, shared table breakouts, and Usage volume.
+Sort by Table A to Z. Groups all rows consistently and makes the watchlist predictable.
 
-**Step 5 — Open in Excel and merge correctly**
+---
 
-Open the main inventory CSV. For each shared table:
-1. Find and delete the single shared table row from the main output
-2. Paste the breakout rows in its place
-3. Table column in breakout rows is already correct
-4. LogSource column differentiates each source
+## Step 8 — Upload as Watchlist
 
-Once merged:
-- Click any cell in the data
-- Press **Ctrl+T**
-- Confirm My table has headers is checked
-- Click OK
-- Go to Home → Format → AutoFit Column Width
-- Select the LastSeen column → right click → Format Cells → Custom → type `yyyy-mm-dd hh:mm` → OK
+**Before uploading — remove these columns:**
+- CurrentStatus — calculated live, goes stale immediately
+- DaysSinceLastLog — calculated live, goes stale immediately
+- LastSeen — goes stale immediately
 
-This formats LastSeen for human readability while keeping the underlying raw datetime value intact. Excel date functions and downstream queries can still use it correctly. Never convert LastSeen to a text string.
-
-**Step 6 — Save and upload to SharePoint**
-
+**The five columns to upload:**
 ```
-[ClientName]-DataSourceAudit-[YYYY-MM-DD].xlsx
+Table, Category, Details, Vetted, Notes
 ```
-
-Upload to the client SharePoint folder before filling in any manual fields. This is your unmodified baseline snapshot.
-
----
-
-## Step 7 — Fill In Manual Fields
-
-Every [Manual] placeholder must be replaced with the actual value or N/A. Use the pre-populated reference below for common Microsoft sources. Use `resources/table-reference/` for any table with a documented entry.
-
----
-
-### Pre-Populated Reference — Common Sources
-
-| Table | LogSource | Origin | Transport | Category | Purpose |
-|---|---|---|---|---|---|
-| SignInLogs | Microsoft Entra ID Interactive Sign-in Logs | Microsoft Entra ID | Microsoft Connector | Identity | Detects compromised accounts, password spray, impossible travel, and MFA fatigue |
-| AADNonInteractiveUserSignInLogs | Microsoft Entra ID Non-Interactive Sign-in Logs | Microsoft Entra ID | Microsoft Connector | Identity | Detects service-to-service auth abuse, token theft, and background authentication anomalies |
-| AADServicePrincipalSignInLogs | Microsoft Entra ID Service Principal Sign-in Logs | Microsoft Entra ID | Microsoft Connector | Identity | Detects abuse of service principals and app registrations — a frequent attacker pivot point |
-| AADManagedIdentitySignInLogs | Microsoft Entra ID Managed Identity Sign-in Logs | Microsoft Entra ID | Microsoft Connector | Identity | Detects abuse of managed identities used by Azure resources to authenticate to other services |
-| AuditLogs | Microsoft Entra ID Audit Logs | Microsoft Entra ID | Microsoft Connector | Identity | Detects directory changes — role assignments, group membership, app registrations, admin operations |
-| AADRiskyUsers | Microsoft Entra ID Identity Protection — Risky Users | Microsoft Entra ID | Microsoft Connector | Identity | Surfaces accounts flagged by Microsoft ML as compromised — leaked credentials, impossible travel |
-| AADUserRiskEvents | Microsoft Entra ID Identity Protection — Risk Events | Microsoft Entra ID | Microsoft Connector | Identity | Specific risk detections per sign-in — requires Entra ID P2 license |
-| OfficeActivity | Microsoft 365 Unified Audit Log | Microsoft 365 | Microsoft Connector | Compliance and Audit | Detects data exfiltration via SharePoint and OneDrive, mailbox access, email forwarding rules, OAuth consent abuse |
-| AzureActivity | Azure Management Plane Activity | Microsoft Azure | Microsoft Connector | Cloud Infrastructure | Detects unauthorized Azure resource changes — role assignments, VM creation, firewall modifications, Key Vault access |
-| SecurityAlert | Microsoft Security Alerts — All Products | Microsoft Sentinel | Microsoft Connector | Cloud Infrastructure | Consolidated alert feed from all connected Microsoft security products |
-| SecurityIncident | Microsoft Sentinel and XDR Incidents | Microsoft Sentinel | Sentinel Native | Cloud Infrastructure | All incidents including XDR-correlated multi-stage incidents — primary pipeline source for ServiceNow tickets |
-| BehaviorAnalytics | UEBA Behavioral Analytics Output | Microsoft Sentinel | Sentinel Native | Capabilities | ML-generated behavioral anomaly scores — requires 14-21 day baseline period |
-| IdentityInfo | UEBA Identity Information | Microsoft Sentinel | Sentinel Native | Capabilities | Enriched user identity data from Entra ID and on-prem AD — used by detections for user context |
-| ThreatIntelIndicators | Microsoft Defender Threat Intelligence Indicators | Microsoft Sentinel | TAXII — Polling | Threat Intelligence | Current IOC feed — malicious IPs, domains, URLs, file hashes matched against ingested log data |
-| ThreatIntelObjects | Microsoft Defender Threat Intelligence STIX Objects | Microsoft Sentinel | TAXII — Polling | Threat Intelligence | STIX 2.1 structured threat intelligence — threat actors, attack patterns, campaign relationships |
-| Heartbeat | Azure Monitor Agent Heartbeat | Microsoft Azure | AMA — DCR | Endpoint | One heartbeat per minute per AMA machine — primary mechanism for detecting agent and machine availability |
-| SentinelHealth | Microsoft Sentinel Operational Health | Microsoft Sentinel | Sentinel Native | Compliance and Audit | Detects silent failures in analytics rules, connectors, and automation before clients notice |
-| SentinelAudit | Microsoft Sentinel Configuration Audit | Microsoft Sentinel | Sentinel Native | Compliance and Audit | Records all configuration changes to the workspace — who changed what and when |
-| SecurityEvent | Windows Security Events via AMA | Windows OS | AMA — DCR | Endpoint | Detects authentication attacks, lateral movement, privilege escalation, and persistence across Windows machines |
-| CommonSecurityLog | [DeviceVendor] — [DeviceProduct] | Network Device | CEF — AMA — DCR | Firewall | Perimeter and network device logs — traffic patterns, connection events, threat signatures |
-| Syslog | [HostName] | Windows OS | AMA — DCR | Endpoint | Linux system logs — varies by host role. Domain controllers, servers, and appliances each have different detection value |
-| ASimNetworkSessionLogs | ASIM Normalized Network Sessions | Multiple Sources | ASIM Parser | Network | Normalized network sessions enabling vendor-agnostic detection rules across multiple source tables |
-| ASimAuditEventLogs | ASIM Normalized Audit Events | Multiple Sources | ASIM Parser | Compliance and Audit | Normalized audit events enabling vendor-agnostic audit detection rules across multiple source tables |
-| ASimWebSessionLogs | ASIM Normalized Web Sessions | Multiple Sources | ASIM Parser | Network | Normalized web session data enabling vendor-agnostic web detection rules across multiple source tables |
-| CloudAppEvents | Microsoft Defender for Cloud Apps Events | Microsoft Defender | XDR Connector | SaaS Application | Detects SaaS application anomalies — mass downloads, impossible travel in apps, OAuth abuse, shadow IT |
-| DeviceEvents | Microsoft Defender for Endpoint — Device Events | Microsoft Defender | XDR Connector | Endpoint | Endpoint security events from enrolled devices — process, network, file, and registry activity |
-| DeviceNetworkEvents | Microsoft Defender for Endpoint — Network Events | Microsoft Defender | XDR Connector | Endpoint | Detects suspicious outbound connections, C2 communication, and lateral movement at the network layer |
-| DeviceLogonEvents | Microsoft Defender for Endpoint — Logon Events | Microsoft Defender | XDR Connector | Endpoint | Detects suspicious logon patterns, credential abuse, and lateral movement on enrolled devices |
-| DeviceProcessEvents | Microsoft Defender for Endpoint — Process Events | Microsoft Defender | XDR Connector | Endpoint | Detects malware execution, living-off-the-land attacks, and suspicious process chains |
-| DeviceFileEvents | Microsoft Defender for Endpoint — File Events | Microsoft Defender | XDR Connector | Endpoint | Detects suspicious file creation, modification, and deletion — ransomware staging, malware drops |
-| DeviceRegistryEvents | Microsoft Defender for Endpoint — Registry Events | Microsoft Defender | XDR Connector | Endpoint | Detects persistence mechanisms and configuration tampering via Windows registry modifications |
-| DeviceImageLoadEvents | Microsoft Defender for Endpoint — Image Load Events | Microsoft Defender | XDR Connector | Endpoint | Detects DLL injection, side-loading, and suspicious module loading patterns |
-| DeviceFileCertificateInfo | Microsoft Defender for Endpoint — Certificate Info | Microsoft Defender | XDR Connector | Endpoint | File signing certificate data — detects unsigned or suspiciously signed executables |
-| DeviceNetworkInfo | Microsoft Defender for Endpoint — Network Info | Microsoft Defender | XDR Connector | Endpoint | Network adapter and configuration data from enrolled devices |
-| DeviceInfo | Microsoft Defender for Endpoint — Device Info | Microsoft Defender | XDR Connector | Endpoint | Device inventory data — OS version, enrollment status, risk level |
-| EmailEvents | Microsoft Defender for Office 365 — Email Events | Microsoft Defender | XDR Connector | Email | Detects phishing attempts, malware delivery, and suspicious email patterns |
-| EmailAttachmentInfo | Microsoft Defender for Office 365 — Attachments | Microsoft Defender | XDR Connector | Email | Detects malicious attachments — file type abuse, macro-enabled documents, suspicious file names |
-| EmailUrlInfo | Microsoft Defender for Office 365 — URLs | Microsoft Defender | XDR Connector | Email | Detects malicious URLs in email — phishing links, credential harvesting sites |
-| EmailPostDeliveryEvents | Microsoft Defender for Office 365 — Post Delivery | Microsoft Defender | XDR Connector | Email | Detects threats identified after email delivery — detonation results, user clicks on malicious links |
-| UrlClickEvents | Microsoft Defender for Office 365 — URL Clicks | Microsoft Defender | XDR Connector | Email | Detects user clicks on URLs in email and Teams — tracks when users interact with potentially malicious links |
-| IdentityLogonEvents | Microsoft Defender for Identity — Logon Events | Microsoft Defender | XDR Connector | Identity | Detects suspicious authentication patterns against on-premises Active Directory |
-| StorageBlobLogs | Azure Storage Account Blob Access Logs | Microsoft Azure | Diagnostic Setting | Cloud Infrastructure | Detects unauthorized data access, mass downloads, and exfiltration from Azure blob storage |
-| StorageFileLogs | Azure Storage Account File Access Logs | Microsoft Azure | Diagnostic Setting | Cloud Infrastructure | Detects unauthorized file share access and suspicious file operations in Azure file storage |
-| StorageQueueLogs | Azure Storage Account Queue Logs | Microsoft Azure | Diagnostic Setting | Cloud Infrastructure | Detects suspicious queue operations that may indicate application-layer attacks |
-| StorageTableLogs | Azure Storage Account Table Logs | Microsoft Azure | Diagnostic Setting | Cloud Infrastructure | Detects unauthorized access and suspicious operations against Azure table storage |
-| AzureDiagnostics | Azure Resource Diagnostic Logs | Microsoft Azure | Diagnostic Setting | Cloud Infrastructure | Aggregated diagnostic logs from multiple Azure resources — Key Vault, NSG, SQL, App Service |
-| AzureMetrics | Azure Resource Metrics | Microsoft Azure | Diagnostic Setting | Cloud Infrastructure | Performance and health metrics from Azure resources — useful for detecting resource abuse |
-| Perf | Performance Counters via AMA | Microsoft Azure | AMA — DCR | Endpoint | System performance data — CPU, memory, disk. Detects resource abuse like cryptomining |
-| Anomalies | Microsoft Sentinel ML Anomalies | Microsoft Sentinel | Sentinel Native | Capabilities | ML-detected behavioral anomalies produced by Sentinel fusion and anomaly detection rules |
-| UserPeerAnalytics | UEBA User Peer Analytics | Microsoft Sentinel | Sentinel Native | Capabilities | Peer group analysis data from UEBA — used to detect deviations from peer group behavior |
-| Usage | Log Analytics Ingestion and Billing | Microsoft Sentinel | Sentinel Native | Compliance and Audit | Tracks data ingestion volume and billing per table — operational tool, not a security data source |
-| AWSCloudTrail | AWS CloudTrail API Activity Logs | AWS | Microsoft Connector | Cloud Infrastructure | Detects unauthorized API calls, suspicious resource changes, and privilege escalation in AWS |
-
----
-
-## Step 8 — Complete Tab 2 Configuration Reference
-
-Create a second tab named Configuration. Fill in technical details for each log source. This tab is engineer-facing only — it documents the exact wiring behind each source.
-
-**Finding the information for Tab 2:**
-- Data Connector name → Sentinel or Defender portal → Data Connectors page
-- Connector Status → Same page — Connected or Disconnected
-- DCR Name → Azure portal → Monitor → Data Collection Rules — filter by workspace
-- DCE Name → Azure portal → Monitor → Data Collection Endpoints
-- Diagnostic Setting → Source resource in Azure portal → Diagnostic Settings
-- Subscription → Azure portal → Subscriptions
-- Workspace → Log Analytics workspace name
-- License Required → Reference license-entitlement-review.md for this client
-
----
-
-## Step 9 — Phase 3 Verification
-
-For every Active source verify configuration is complete and correct. Data flowing does not mean everything is configured correctly.
-
-### Verify Silent Detection Health
-
-```kql
-// All AB-series custom rules — health status
-SentinelHealth
-| where SentinelResourceType == "Analytics Rule"
-| where SentinelResourceName matches regex @"^AB\d+"
-| summarize LastStatus = arg_max(TimeGenerated, Status, Description)
-    by SentinelResourceName
-| project
-    DetectionName = SentinelResourceName,
-    HealthStatus = Status,
-    LastChecked = TimeGenerated,
-    Description
-| order by HealthStatus asc
-```
-
-Cross-reference against SilentDet column. Any log source with no matching detection needs one created — mark SilentDet as Missing and add a Notes action item.
-
----
-
-### Verify Microsoft Connector Log Category Completeness
-
-```kql
-// Template — replace TABLE_NAME with each expected table
-TABLE_NAME
-| where TimeGenerated > ago(24h)
-| summarize Count = count(), LastSeen = max(TimeGenerated)
-```
-
-Minimum required Entra ID tables — verify each:
-- SignInLogs
-- AADNonInteractiveUserSignInLogs
-- AADServicePrincipalSignInLogs
-- AADManagedIdentitySignInLogs
-- AuditLogs
-- AADRiskyUsers — requires Entra ID P2
-- AADUserRiskEvents — requires Entra ID P2
-
-If any return zero — the diagnostic setting for that category is not configured in Entra ID → Monitoring → Diagnostic Settings.
-
----
-
-### Verify AMA Sources — Heartbeat Health
-
-```kql
-// Heartbeat — All AMA Machines
-Heartbeat
-| where TimeGenerated > ago(24h)
-| summarize LastHeartbeat = max(TimeGenerated) by Computer, OSType, Category
-| extend HoursSince = datetime_diff('hour', now(), LastHeartbeat)
-| extend HeartbeatStatus = iff(HoursSince <= 1, "Healthy", "Missing")
-| project Computer, OSType, Category, LastHeartbeat, HoursSince, HeartbeatStatus
-| order by HoursSince desc
-```
-
----
-
-### Verify CEF Sources — Forwarder Health
-
-```kql
-// CEF Source Verification
-// Replace VENDOR_NAME and PRODUCT_NAME with actual values
-CommonSecurityLog
-| where TimeGenerated > ago(24h)
-| where DeviceVendor == "VENDOR_NAME"
-| where DeviceProduct == "PRODUCT_NAME"
-| summarize Count = count(), LastSeen = max(TimeGenerated)
-```
-
-If zero results — forwarder stopped receiving from this device. Check forwarder VM, AMA health, device Syslog destination, and forwarder port.
-
----
-
-## Steps 10-11 — Document and Sort
-
-**Step 10** — Every non-Active row must have Notes containing: what the issue is, next step, owner, target date. No exceptions.
-
-**Step 11** — Sort by Table A to Z, then LogSource A to Z. Groups all rows for the same table together and keeps log sources alphabetical within each table.
-
----
-
-## Step 12 — Upload Tab 1 as Watchlist
-
-**Before uploading — three important notes:**
-
-**Remove DaysSinceLastLog before upload.**
-DaysSinceLastLog is calculated at audit time and goes stale immediately after upload. Delete this column from the CSV before uploading or exclude it during watchlist column mapping. The workbook calculates DaysSinceLastLog live at query time from LastSeen.
-
-**Status is stored as an audit snapshot.**
-The Status column reflects what the status was at the time of the audit. It goes stale as soon as the watchlist is uploaded. The workbook always recalculates Status live from workspace queries — it never reads Status from the watchlist for current health decisions.
-
-**LastSeen becomes a string in the watchlist.**
-Watchlists store all values as strings regardless of original type. Any workbook query that reads LastSeen from the watchlist must wrap it with todatetime() before doing any date math or comparisons:
-```kql
-_GetWatchlist('DataSourceInventory')
-| extend LastSeen = todatetime(LastSeen)
-| extend DaysSinceLastLog = datetime_diff('day', now(), LastSeen)
-```
-This is required in every workbook query that uses LastSeen. Without it comparisons silently fail or return incorrect results.
 
 **Upload steps:**
-1. Navigate to Watchlists in Sentinel or Defender portal
-2. Create new watchlist named `DataSourceInventory`
-3. Export Tab 1 as CSV — remove DaysSinceLastLog column first
-4. Upload that CSV
-5. Set SearchKey to Table column
+1. Export the five-column tab as CSV
+2. Navigate to Sentinel → Watchlists → Create new
+3. Name: `[mssname]-tables`
+4. Upload CSV
+5. Set SearchKey to `Table`
 6. Validate:
 
 ```kql
-_GetWatchlist('DataSourceInventory')
+_GetWatchlist('[mssname]-tables')
 | summarize TotalRows = count()
 ```
+
+Confirm row count matches your spreadsheet.
+
+---
+
+## Step 9 — Proceed to Sources Watchlist
+
+The tables watchlist is now complete. The next step is building `[mssname]-sources` — the data source registry where all monitoring detail lives.
+
+Follow the complete process in:
+```
+06-watchlist-management/sources-watchlist-build-guide.md
+```
+
+That guide covers the AI-assisted process for building the sources watchlist table by table using the detections CSV, generating KQL sub-functions simultaneously, and uploading the completed watchlist.
 
 ---
 
 ## Known Limitations
 
-**Lighthouse access scope** — access scoped to Sentinel workspace and Log Analytics. May not have access to VM extensions, resource tags, Azure Policy, or Resource Graph. Heartbeat queries cover AMA health without VM extension access.
+**Lighthouse access scope** — access scoped to Sentinel workspace and Log Analytics. May not have access to VM extensions, resource tags, Azure Policy, or Resource Graph.
 
-**Tables that never received data** — Log Analytics only registers a table after at least one record is written. A connector enabled but never sending data will not appear in any query. Document as Missing.
+**Tables that never received data** — Log Analytics only registers a table after at least one record is written. A connector enabled but never sending data will not appear in any query. Set Vetted = No and document in Notes.
 
-**Shared table field reliability** — breakout queries depend on DeviceVendor, HostName, and Computer being correctly populated. Blank or inconsistent values need Notes documentation and source investigation.
+**Shared table breakout queries** — full breakout query library for all shared tables is in `resources/scratch.md`. Use those queries to understand what sources write to each shared table before filling in the Details field.
 
-**ASIM tables** — health depends entirely on source table health. If a source table goes inactive the ASIM table may still appear active while producing degraded output. Always check ASIM source tables during verification.
-
----
-
-## Onboarding Note
-
-This audit process is designed to be repeatable and eventually automated. The completed watchlist becomes the baseline for the living workbook, change detection analytics rules, and automated Teams notifications. In the future this process will be part of client onboarding. See PROGRAM-MAP.md for the full automation pipeline design.
+**ASIM tables** — health depends entirely on source table health. If a source table goes inactive the ASIM table may still appear active. Always note this in the Details field for ASIM tables.
 
 ---
 
@@ -776,299 +381,86 @@ This audit process is designed to be repeatable and eventually automated. The co
 Audit Completed By:      [Engineer Name]
 Date Completed:          [YYYY-MM-DD]
 Client:                  [Client Name]
-Total Log Sources:       [Number]
+Total Tables:            [Number]
 Active:                  [Number]
 Inactive:                [Number]
 Review:                  [Number]
 No Data:                 [Number]
-Missing:                 [Number]
-Decom:                   [Number]
-Silent Det Coverage:     [X of Y log sources have a documented silent detection]
+Vetted = Yes:            [Number]
+Vetted = No:             [Number]
 Next Audit Due:          [YYYY-MM-DD]
 Notes:                   [Overall observations]
 Watchlist Uploaded:      Yes / No
 SharePoint Backup:       Yes / No — [link]
-Tab 2 Complete:          Yes / No
+Sources Build Started:   Yes / No
 ```
 
-No log source may be signed off with a non-Active status without a documented action item and owner in Notes.
-
----
-
-*This runbook is maintained in sentinel-mssp-playbook under 02-data-sources. Update when the audit process changes, new source types require guidance, or new shared tables are identified.*
-
----
-
-## DetectionCatalog — Building and Maintaining the Detection Watchlist
-
-The DetectionCatalog watchlist is the detection team's counterpart to the DataSourceInventory watchlist. It documents every AB-series detection — what tables it queries, what it catches, and what watchlists it uses. The GetEnrichedInventory function joins these two watchlists together so the workbook can show detection coverage per data source automatically.
-
-**This step happens before the main audit.** Knowing which detections exist and which tables they depend on informs how you classify each data source — specifically the SilentDet field and the tier assignment for silent detection monitoring.
-
----
-
-### Why This Exists
-
-Without the DetectionCatalog:
-- You fill in the Detections field in DataSourceInventory manually — slow and error prone
-- You have no automated way to know which data sources have zero detection coverage
-- The workbook cannot show detection counts per source
-- Gap analysis requires manual cross-referencing
-
-With the DetectionCatalog:
-- The GetEnrichedInventory function joins it automatically
-- Detection counts appear in the workbook with no manual entry
-- Zero-detection sources are immediately visible as gaps
-- The detection team owns their data — platform team owns theirs
-
----
-
-### The Four Fields
-
-| Field | What Goes Here | Who Fills It In |
-|---|---|---|
-| AnalyticRule | AB##### - Full detection name | Python script |
-| Table | Comma separated exact table names this detection queries | Python script |
-| Description | Plain English — what does this detection catch | Detection team — manual |
-| Watchlists | Comma separated watchlist names this detection references — or None | Python script |
-
-**Critical:** The Table field must use exact table names as they appear in Log Analytics. This is the join key between DetectionCatalog and DataSourceInventory. If a table name in DetectionCatalog does not exactly match a Table value in DataSourceInventory the join silently fails for that row.
-
----
-
-### Step 1 — Generate the Initial Skeleton
-
-The DetectionCatalog must be filled in manually. There is no KQL query that can reliably return all AB-series rules including disabled ones — KQL only sees rules that have executed. The Python script from the detection team is the authoritative source for the final version. For now use this query to generate a template with the correct column structure and fill it in manually.
-
-```kql
-// ============================================================
-// DETECTION CATALOG — Template row
-// Always returns one row with the correct column headers
-// Export as CSV then duplicate the row for each detection
-// Fill in manually — do not leave [Manual] placeholder in any cell
-// ============================================================
-print
-    AnalyticRule = "[Manual] — AB##### - Detection name",
-    Table =        "[Manual] — exact table names comma separated",
-    Description =  "[Manual] — plain English what does this catch",
-    Watchlists =   "[Manual] — watchlist names comma separated or None"
-```
-
-**How to use this:**
-1. Run the query — it returns one template row with the four column headers
-2. Export as CSV
-3. Open in Excel — format as Excel Table with Ctrl+T
-4. Add one row per AB-series detection — fill in all four fields
-5. Include both standard detections AND silent log source detections in the same watchlist
-6. Save as:
-```
-[ClientName]-DetectionCatalog-[YYYY-MM-DD].xlsx
-```
-7. Upload to SharePoint before uploading as a watchlist
-
-**On silent log source detections:**
-All SLD-tagged detections go in this same watchlist alongside standard detections. The AnalyticRule field value makes the type clear — `AB00012 - SLD - SignInLogs Silence` is immediately distinguishable from `AB00034 - Impossible Travel Sign-in`. The workbook and GetEnrichedInventory function use the SLD tag in the name to separate them when needed.
-
-**Important:** This is a manual process for now. When the detection team delivers their Python script output use that as the authoritative version. Compare the two — any discrepancies in Table values need to be resolved with the detection team before uploading as the final watchlist.
-
----
-
-### Step 2 — Request Python Script Output from Detection Team
-
-While you have the KQL skeleton the detection team's Python script produces a more complete and accurate version. Request the following from them:
-
-**What to ask for:**
-- Full list of all AB-series analytics rules — including disabled ones
-- For each rule: rule name, enabled status, tables queried, watchlists referenced, MITRE tactic and technique
-- Output as CSV in the same four-column format: AnalyticRule, Table, Description, Watchlists
-
-**What they already have:**
-Their script already pulls enabled status, tables, watchlists, and MITRE from the Sentinel Analytics Rules API. The only field that needs manual input from them is Description — plain English explanation of what each detection catches.
-
-**The validation process:**
-Once you receive their CSV compare it against your KQL skeleton:
-- Rules in KQL skeleton but not in Python output — investigate why
-- Rules in Python output but not in KQL skeleton — these are disabled rules or rules that have never fired
-- Discrepancies in Table values — clarify with detection team which is correct
-
-The Python script output is the authoritative version. Use it as the final DetectionCatalog once Description is filled in.
-
----
-
-### Step 3 — Gap Detection Query
-
-After the initial DetectionCatalog is uploaded use this query to find rules that are missing from it. Run this after every detection team release to catch new rules that need to be added.
-
-```kql
-// ============================================================
-// DETECTION CATALOG GAP DETECTION
-// Finds AB-series rules in SentinelHealth not in DetectionCatalog
-// Run periodically to catch new detections that need to be added
-// ============================================================
-let catalog = _GetWatchlist('DetectionCatalog')
-| summarize by AnalyticRule;
-SentinelHealth
-| where SentinelResourceType == "Analytics Rule"
-| where SentinelResourceName matches regex @"^AB\d+"
-| summarize LastRun = max(TimeGenerated)
-    by SentinelResourceName
-| join kind=leftanti (
-    catalog
-    | project SentinelResourceName = AnalyticRule
-) on SentinelResourceName
-| extend Status = "Missing from DetectionCatalog — add to watchlist"
-| project
-    AnalyticRule = SentinelResourceName,
-    LastRun,
-    Status
-| order by AnalyticRule asc
-```
-
-Any rule returned by this query needs to be added to the DetectionCatalog. Share the results with the detection team — they add the Description and confirm the Table and Watchlists values.
-
----
-
-### Step 4 — Ongoing Maintenance
-
-The DetectionCatalog is a living document. It needs to be updated when:
-
-- A new AB-series detection is created — detection team adds it
-- A detection is modified to query different tables — detection team updates the Table field
-- A detection is retired — row is removed or marked as decommissioned
-- A new watchlist is created and referenced by a detection — detection team updates the Watchlists field
-
-**The maintenance process:**
-1. Detection team creates or modifies a detection
-2. They update the DetectionCatalog CSV and re-upload to Sentinel
-3. Platform team runs the gap detection query to confirm nothing is missing
-4. GetEnrichedInventory function automatically reflects the updated catalog in the workbook
-
-**Frequency:** Run the gap detection query after every detection team release cycle. At minimum run it monthly alongside the data source audit review.
-
----
-
-### How DetectionCatalog Connects to DataSourceInventory
-
-The GetEnrichedInventory KQL function joins these two watchlists on the Table field. The result automatically populates detection counts per data source in the workbook without any manual entry in DataSourceInventory.
-
-```kql
-// Simplified join — how the function works
-let inventory = _GetWatchlist('DataSourceInventory')
-| extend LastSeen = todatetime(LastSeen);
-let detections = _GetWatchlist('DetectionCatalog')
-| mv-expand Tables = split(Table, ",")
-| extend TableName = trim(" ", tostring(Tables))
-| summarize
-    DetectionCount = count(),
-    DetectionList = make_set(AnalyticRule)
-    by TableName;
-inventory
-| join kind=leftouter detections on $left.Table == $right.TableName
-| extend DetectionCount = coalesce(DetectionCount, 0)
-| extend HasCoverage = DetectionCount > 0
-```
-
-Sources with DetectionCount = 0 are immediately visible as coverage gaps. This drives the gap analysis section of the workbook and feeds the detection value conversation in client reviews.
-
+No table may be signed off with Vetted = No without a documented action item and owner in Notes.
 
 ---
 
 ## DetectionCatalog — Building the Watchlist Using AI Assistance
 
-> **Note:** This section documents the exact process used to build the initial DetectionCatalog watchlist. All custom content for this program uses the prefix `OC` followed by numbers — for example `OC12345 - Cloud Alerts`. This is the company naming convention for all custom analytic rules delivered to clients.
+> **Note:** This section documents the process for building the `[mssname]-detections` watchlist. All custom detections use the prefix `OC` followed by numbers — for example `OC12345 - Cloud Alerts`. This is the company naming convention for all custom analytic rules delivered to clients.
 
 ---
 
 ### Why We Are Building This
 
-When a client asks what detections are protecting them the answer should be immediate, accurate, and complete. Without a DetectionCatalog that answer requires manually cross-referencing multiple places — the analytics rules list in Sentinel, internal documentation, and tribal knowledge held by individual engineers. That is slow, error-prone, and breaks down when engineers change.
-
-The DetectionCatalog solves this by creating a single structured record of every custom detection deployed for a client. It answers three questions that matter:
+The DetectionCatalog is a ledger of all custom content deployed for a client. Every custom analytic rule has a row here. It answers three questions:
 
 - **What do we have?** — every OC-series rule in one place
 - **What does it do?** — plain English description per rule
-- **What does it depend on?** — which tables and watchlists each rule needs to function
+- **What does it depend on?** — which tables and watchlists each rule needs
 
-This watchlist is also the foundation for everything the workbook shows around detection coverage. The GetEnrichedInventory KQL function joins DataSourceInventory against DetectionCatalog to automatically surface how many detections each data source has, which sources have zero coverage, and which operational health rules are monitoring the platform. Without this watchlist none of that is possible without manual work before every client review.
-
-**For the audit deck** — the DetectionCatalog powers the detection coverage section. It shows the client a complete picture of what is protecting them, broken down by security detections and operational health monitoring. It is what lets you say with confidence "here is every detection we have built for you and here is what it watches for."
-
----
-
-### What the DetectionCatalog Is
-
-The DetectionCatalog is a ledger of all custom content the company has built and deployed for a client. Every custom analytic rule — security detections, operational health rules, silent log source detections — has a row in this watchlist. It is the authoritative record of what has been built, what it does, what data it depends on, and who is responsible for it.
-
-This watchlist has two consumers:
-
-**The workbook** — joins DetectionCatalog against DataSourceInventory via the GetEnrichedInventory function to show detection coverage per data source, surface gaps, and power the audit deck.
-
-**The detection team and platform team** — use it as a shared ledger so both teams always know what exists, what tables it queries, and who owns it.
-
----
-
-### Naming Convention and Watchlist Upload
-
-**Watchlist name:**
-```
-[CompanyName]-DetectionCatalog
-```
-Example: `Contoso-DetectionCatalog`
-
-Use your company name exactly as it appears in your other watchlists. This naming convention applies to all watchlists in this program — CompanyName prefix followed by the watchlist purpose. Consistency here matters because KQL queries reference the watchlist name directly. Changing the name after upload means updating every query that uses it.
-
-**How to upload to Sentinel:**
-1. Complete the spreadsheet fully — all six fields filled in, no [Manual] placeholders remaining
-2. Export Tab 1 as CSV
-3. Navigate to Sentinel → Watchlists → Create new
-4. Enter the watchlist name: `[CompanyName]-DetectionCatalog`
-5. Enter an alias — use the same name as the watchlist
-6. Upload the CSV file
-7. Set the SearchKey to `RuleId`
-8. Click Review and Create
-9. Wait for the upload to complete — row count will appear when done
-10. Validate the upload:
-
-```kql
-_GetWatchlist('[CompanyName]-DetectionCatalog')
-| summarize TotalRows = count()
-```
-
-Confirm the row count matches your spreadsheet. If it does not match re-check the CSV for formatting issues — blank rows, merged cells, or special characters in the Description field are common causes.
+The GetEnrichedInventory function joins [mssname]-sources against [mssname]-detections on the Table field. Detection counts per source are derived automatically. Without this watchlist that join is not possible.
 
 ---
 
 ### Field Definitions
 
-The DetectionCatalog watchlist has six fields in this exact order:
+Six fields in this exact order:
 
 | Field | What Goes Here |
 |---|---|
-| RuleId | The unique rule identifier — OC##### |
-| AnalyticRule | Full rule name exactly as it appears in Sentinel — OC##### - Rule Name |
-| Table | Comma separated exact table names this rule queries. Use `All` if the rule uses search * or union * across all tables. |
-| Watchlist | Comma separated watchlist names this rule references. Write None if no watchlists are used. |
-| AlertClass | `Security` for threat detections and anomaly rules. `Operational` for platform health rules — silent log sources, heartbeat monitoring, Logic App failures, data limit alerts, connector health. |
-| Description | Plain English explanation of what this rule detects or monitors. Written so any engineer can understand it without reading the KQL. |
+| RuleId | OC##### — unique identifier, no other text |
+| AnalyticRule | Full rule name exactly as it appears in Sentinel |
+| Table | Comma separated exact table names this rule queries. Use `All` if the rule uses search * or union *. |
+| Watchlist | Comma separated watchlist names referenced via _GetWatchlist(). Write None if none. |
+| AlertClass | Security or Operational |
+| Description | Plain English — what does this rule detect or monitor |
 
-**AlertClass values and ownership:**
+**AlertClass:**
+- Security — threat detections, TI matching, anomaly rules, behavioral detections
+- Operational — silent log source detections, heartbeat monitoring, Logic App failures, data limits
 
-| Value | Used For | Owned By |
-|---|---|---|
-| Security | Threat detections, TI matching, anomaly rules, behavioral detections | Detection team |
-| Operational | Silent log source detections, heartbeat miss, Logic App failure, data limit warning, data limit reached, connector health, missed ingestion | Platform team |
+---
+
+### Naming Convention and Upload
+
+**Watchlist name:**
+```
+[mssname]-detections
+```
+
+**Upload steps:**
+1. Complete the spreadsheet — all six fields, no [Manual] placeholders
+2. Export as CSV
+3. Sentinel → Watchlists → Create new
+4. Name: `[mssname]-detections`
+5. Upload CSV
+6. Set SearchKey to `RuleId`
+7. Validate:
+```kql
+_GetWatchlist('[mssname]-detections')
+| summarize TotalRows = count()
+```
 
 ---
 
 ### The AI-Assisted Build Process
 
-Building the DetectionCatalog manually from scratch is time consuming. The following process uses AI to extract and structure the information from Sentinel analytics rules efficiently. This process was used to build the initial catalog and should be repeated when adding large batches of new rules.
-
----
-
 #### Step 1 — Train the AI
-
-Before starting open your AI assistant and provide the following prompt to establish context and output format:
 
 ```
 I am building a detection catalog watchlist for Microsoft Sentinel.
@@ -1099,118 +491,47 @@ I will add the header row myself.
 Confirm you understand this format before I begin providing rules.
 ```
 
-Wait for the AI to confirm it understands before proceeding.
-
----
-
 #### Step 2 — Filter Rules in Sentinel
-
-In the Sentinel portal:
 
 ```
 Sentinel → Analytics → Active rules
 → Search bar: type OC
-→ This filters to all custom OC-prefixed rules
-→ Sort alphabetically by name
+→ Sort alphabetically
 → Start from the top
 ```
 
----
-
 #### Step 3 — Extract Rule Information
 
-For each rule work through the following:
-
-1. Click the rule to open it
-2. Copy the following information in this order into a text editor:
-   - Rule name — exactly as shown
-   - Rule ID — the OC##### identifier
-   - Description — from the rule description field
-   - KQL Query — the full query from the rule editor
-
-Paste all four items into the text editor together for each rule before moving to the next. This keeps the information grouped and prevents mixing up rules.
-
-**Text editor format per rule:**
+For each rule copy into a text editor in this order:
 ```
-Name: OC12345 - Cloud Alerts
+Name: OC12345 - Rule Name
 ID: OC12345
-Description: [description from rule]
+Description: [rule description]
 Query:
 [full KQL query]
 ---
 ```
 
----
+#### Step 4 — Send to AI in Batches of 50
 
-#### Step 4 — Batch and Send to AI
+After each batch copy the AI output into your spreadsheet. Clear the text editor and start the next batch.
 
-Work through rules in batches of approximately 50. After each batch:
+#### Step 5 — Review Output
 
-1. Copy the entire batch from the text editor
-2. Paste into the AI assistant
-3. The AI outputs CSV rows for each rule
-4. Copy the CSV output into your spreadsheet
-5. Clear the text editor and start the next batch
+- Table = [Manual] — open the rule and fill in yourself
+- AlertClass — verify Security vs Operational for every row
+- Description — verify accuracy
 
-**Why batches of 50:**
-AI context windows have limits. Batching prevents the AI from losing context of earlier rules. At 50 rules per batch the output stays accurate and consistent.
+#### Step 6 — Gap Detection Query
 
----
-
-#### Step 5 — Handle Manual Fields
-
-After the AI processes each batch review the output for:
-
-- Table = `[Manual]` — the AI could not determine the table from the KQL. Open the rule, read the KQL, and fill in the table name yourself.
-- AlertClass — verify the AI correctly classified each rule as Security or Operational. The AI may misclassify operational rules as security rules if the rule name is ambiguous. Review all Operational rules manually.
-- Description — review for accuracy. The AI generates descriptions from the KQL logic. Verify they accurately describe what the rule detects.
-
----
-
-#### Step 6 — Add the AlertClass Field
-
-After all rules are extracted and in the spreadsheet:
-
-1. Add the AlertClass column if not already present
-2. Work through every row and assign Security or Operational
-3. Use this guidance:
-   - Contains SLD, silence, heartbeat, Logic App, data limit, connector, ingestion → Operational
-   - Everything else → Security
-4. Review all Operational assignments — these are platform team owned
-
----
-
-#### Step 7 — Create the CSV and Upload
-
-Once the spreadsheet is complete and reviewed:
-
-1. Save as Excel workbook first:
-```
-[ClientName]-DetectionCatalog-[YYYY-MM-DD].xlsx
-```
-2. Upload to SharePoint as the backup copy
-3. Export Tab 1 as CSV for watchlist upload
-4. In Sentinel navigate to Watchlists → Create new watchlist
-5. Name the watchlist:
-```
-[CompanyName]-DetectionCatalog
-```
-6. Upload the CSV
-7. Set SearchKey to `RuleId`
-8. Confirm row count matches your spreadsheet
-
----
-
-### Gap Detection — Finding Missing Rules
-
-After the initial upload run this query periodically to find rules that exist in Sentinel but are missing from the DetectionCatalog. Run after every detection team release cycle and at minimum monthly.
+Run periodically to find rules missing from the watchlist:
 
 ```kql
 // ============================================================
 // DETECTION CATALOG GAP DETECTION
-// Finds OC-prefixed rules in SentinelHealth not in DetectionCatalog
+// Finds OC-prefixed rules in SentinelHealth not in [mssname]-detections
 // ============================================================
-let catalog = _GetWatchlist('[CompanyName]-DetectionCatalog')
+let catalog = _GetWatchlist('[mssname]-detections')
 | summarize by RuleId;
 SentinelHealth
 | where SentinelResourceType == "Analytics Rule"
@@ -1230,16 +551,18 @@ SentinelHealth
 | order by SentinelResourceName asc
 ```
 
-Any rule returned needs to be added. Use the AI process above for new rules — process them in a batch and append to the existing CSV before re-uploading the watchlist.
-
 ---
 
 ### Ongoing Maintenance
 
 | Task | When | Who |
 |---|---|---|
-| Add new rules to DetectionCatalog | When new OC rules are deployed | Platform team or detection team |
+| Add new rules | When new OC rules are deployed | Platform or detection team |
 | Run gap detection query | After every detection team release | Platform team |
 | Review AlertClass assignments | When rule purpose changes | Platform team |
-| Update Table field when rule KQL changes | When detection team modifies a rule | Detection team notifies platform team |
-| Re-upload updated CSV to watchlist | After any changes | Platform team |
+| Update Table field when KQL changes | When detection team modifies a rule | Detection team notifies platform team |
+| Re-upload updated CSV | After any changes | Platform team |
+
+---
+
+*This runbook is maintained in sentinel-mssp-playbook under 02-data-sources. Update when the audit process changes, new source types require guidance, or new shared tables are identified.*
