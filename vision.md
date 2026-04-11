@@ -32,6 +32,32 @@ This creates real problems:
 
 ---
 
+## The Moment Everything Clicks
+
+Imagine this scenario.
+
+A new client signs with your MSSP. Within 48 hours they receive a clean guided spreadsheet. It has every field they need to fill in — their data sources, their critical assets, their key contacts, their compliance requirements. Dropdowns for approved values. Instructions built in. No technical knowledge required.
+
+They fill it in. You review it, add the technical fields — connector names, DCR references, detection assignments. You upload five watchlists to their Sentinel workspace.
+
+The workbook opens.
+
+Every data source they documented is now visible with a live health status. Every detection is mapped to the sources it depends on. Every SLA commitment is tracked and measurable. Every API key and credential has an expiry date and an owner. The MITRE coverage map shows exactly where they are protected and where the gaps are.
+
+The onboarding progress tab shows 73% complete. You can see exactly what is missing — three sources need silent detections, two connectors need to be configured, one capability needs a dependency resolved. No manual checklist. No CSM spreadsheet. The data tells the truth.
+
+Two weeks later everything is green. Onboarding is complete. Not because someone ticked a box — because the system says so.
+
+A quarter later you sit down with the client for their first audit review. You open the workbook. Everything is live and current. You did not prepare anything. You did not pull any reports. You did not ask anyone for status updates. You just open it and start talking.
+
+The client sees their data sources, their detection coverage, their MITRE map, their costs, their dependencies. They see that you caught three issues before they did and resolved them. They see that their Salesforce API key expires in 23 days and you already have a rotation scheduled. They see that the detection covering their Azure Firewall fired six times last month and all six were legitimate threats that were triaged.
+
+They are not asking if you are doing your job. They are asking what is next.
+
+That is what this program builds. Not a workbook. Not a runbook. Not a set of watchlists. A system that makes excellence the default — for every client, every engineer, every review, every time.
+
+---
+
 ## The Three Phases
 
 ### Phase 1 — Baseline and Standard
@@ -296,21 +322,18 @@ Five watchlists power the entire program. Every piece of data we need lives in o
 |---|---|
 | Table | Links to [mssname]-tables |
 | LogSource | Plain English source name |
+| Category | Security category |
 | Origin | What generated this data |
 | Transport | How it gets into Sentinel |
-| Category | Security category |
 | Purpose | One sentence — what does this detect or provide |
-| SLS | Yes / No — is this under our service commitment |
-| RequirementSource | What justifies tracking — OC#####, UEBA, PCI-DSS etc |
-| HasFunction | Yes / No |
-| FunctionName | KQL sub-function name or None |
-| DataConnector | Sentinel connector name if applicable |
+| SLA | True / False — is this source part of the service level agreement |
+| DataConnector | Sentinel connector name if applicable — reference only, no status tracking |
 | DCRName | Data Collection Rule name if applicable |
 | DCEName | Data Collection Endpoint name if applicable |
-| SilentDet | AB##### or Missing |
-| MonitoringFrequency | None / 1h / 5h / 15h / 24h / 48h |
+| FunctionName | KQL sub-function name — null means no function needed |
+| SLS | AB##### or Missing — the silent log source detection assigned to this source |
+| MonitoringFrequency | None / 1h / 5h / 15h / 24h / 48h — read by silent detection as variable |
 | DateAdded | When first documented |
-| Vetted | Yes / No |
 | Notes | Technical notes, gotchas, environment specific context |
 
 ---
@@ -396,19 +419,36 @@ This deserves its own document and its own session. Flag it as a priority item i
 
 ## The Onboarding Process
 
-When this program is complete onboarding a new client should be a defined repeatable process with a clear timeline and a clear definition of done.
+When this program is complete onboarding a new client should be a defined repeatable process with a clear timeline and a clear definition of done. The watchlist-driven variable approach makes this possible at scale.
 
-The onboarding process will:
+**The onboarding engine concept:**
+
+The same spreadsheet format used for ongoing operations becomes the onboarding intake form. A new client receives a pre-formatted guided spreadsheet with field definitions, dropdown values for approved fields, and instructions built in. They fill in what they know. We fill in the technical fields. Upload the watchlists. The workbook and detections light up automatically.
+
+No manual status tracking. No CSM spreadsheets. The data tells the truth.
+
+**The onboarding workbook tab shows:**
+- Which sources are documented and vetted
+- Which sources have functions configured
+- Which sources have silent detections assigned
+- Which SLA sources are active and healthy
+- Overall onboarding completion percentage — derived live from watchlist state
+
+Onboarding is complete when the workbook shows green across all required fields. That is the definition of done — not a checklist someone fills in manually.
+
+**The onboarding process:**
 1. Deploy the baseline configuration — all standard connectors, diagnostic settings, capabilities
-2. Run the data source audit — populate DataSourceInventory
-3. Build the DetectionCatalog — catalog all custom detections deployed
-4. Complete the client questionnaire — document requirements and SLS commitment
+2. Provide the client with the guided intake spreadsheet
+3. Client fills in what they know — data sources, compliance requirements, key contacts, critical assets
+4. We review, validate, and complete the technical fields — FunctionName, DCRName, SLS detection IDs
 5. Upload all watchlists — client is now in the system
-6. Verify silent detection coverage — every SLS source has monitoring
-7. Deliver the first audit deck — baseline established, client knows where they stand
-8. Schedule recurring audit cadence — quarterly reviews, monthly health checks
+6. Detections deploy and immediately use watchlist values as variables
+7. Workbook lights up — onboarding progress visible automatically
+8. Verify silent detection coverage — every SLA source has monitoring
+9. Deliver the first audit deck — baseline established, client knows where they stand
+10. Schedule recurring audit cadence — quarterly reviews, monthly health checks
 
-The onboarding timeline, checklist, and definition of done will be documented in a dedicated onboarding guide. This is a future document — build it once the baseline and visibility phases are complete.
+The onboarding timeline, checklist, and definition of done will be documented in a dedicated onboarding guide. This is the next major project after the current process documentation and function building is complete.
 
 ---
 

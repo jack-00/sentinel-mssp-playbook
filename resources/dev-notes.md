@@ -389,3 +389,134 @@ _GetWatchlist('LogSourceRegistry')
 ```
 
 Any row where RequirementType is null after this join is a source with no documented requirement — flag for review.
+
+
+---
+
+## Final Watchlist Design — Locked
+
+Five watchlists. No more, no less. Every design decision below is final unless explicitly revisited.
+
+### The Five Watchlists
+
+```
+[mssname]-tables        — table pipe registry, backbone
+[mssname]-sources       — data source details, transport, SLS, functions
+[mssname]-detections    — detection catalog, owned by detection team
+[mssname]-dependencies  — credentials, API keys, expiry tracking
+[mssname]-client        — client profile, contacts, links
+```
+
+### The Table vs Source Split — Why It Matters
+
+A table is a pipe. It is just a container. We track it at a high level to know it exists and catch new tables appearing. Transport, origin, SLS, function names — none of that belongs at the table level because one table can have multiple sources each with completely different transport methods and SLS commitments.
+
+The source watchlist is where everything meaningful lives. One row per tracked data source. This is what drives the workbook data sources tab, the silent detections, the sub-functions, and the dependencies.
+
+### SLS Lives at the Source Level
+SLS = Yes/No is a field in `[mssname]-sources` not in `[mssname]-tables`. This is because one table can have multiple sources and each source may have a different SLS commitment. A table-level SLS flag would be ambiguous and misleading.
+
+### Dependencies Are Separate From Sources
+One dependency can affect multiple sources. Storing dependency details in the source watchlist would require duplicating credential information across multiple rows. `[mssname]-dependencies` stores each credential once and links to affected sources via the LinkedSource field.
+
+### Audit Deck Tab Order — Final
+```
+1. Splash
+2. SLS and Capabilities
+3. Table Health
+4. Data Sources
+5. Dependencies
+6. Detections
+7. MITRE Coverage
+8. Ingestion and Cost
+9. Opportunities and Action Items
+```
+
+### Two Modes — Client and Internal
+The audit deck workbook serves two audiences. Client mode shows clean visualizations and plain English summaries. Internal MSSP mode shows full technical detail. Same functions, same data, different field projections in the workbook queries. Design every function to return all fields — the workbook query controls what is shown per mode.
+
+### MonitoringFrequency Field
+Both `[mssname]-tables` and `[mssname]-sources` have a MonitoringFrequency field. Values: None / 1h / 5h / 15h / 24h / 48h. This field drives silent detection threshold configuration. A source with MonitoringFrequency = 24h gets a silent detection that fires if no data arrives in 24 hours. The silent detection reads this field from the watchlist — changing the threshold means updating the watchlist, not the detection KQL.
+
+
+---
+
+## Final [mssname]-sources Field Set — Locked
+
+```
+Table               — links to [mssname]-tables
+LogSource           — plain English source name
+Origin              — what generated this data
+Transport           — how it gets into Sentinel
+Category            — security category
+Purpose             — one sentence client facing
+SLA                 — True/False — part of service level agreement
+RequirementSource   — what justifies tracking this source
+DataConnector       — connector name for reference only, no status tracking
+FunctionName        — KQL sub-function name or null if none needed
+DCRName             — Data Collection Rule name if applicable
+DCEName             — Data Collection Endpoint name if applicable
+SLS                 — AB##### or Missing — silent log source detection
+MonitoringFrequency — None / 1h / 5h / 15h / 24h / 48h
+DateAdded           — raw datetime
+Notes               — technical notes, gotchas, environment context
+```
+
+**Key decisions locked:**
+- Vetted removed — if it is in sources it is already vetted by definition
+- HasFunction removed — FunctionName null means no function, value means function exists
+- SLA = True/False — contractual service level agreement commitment
+- SLS = AB##### — the silent log source detection assigned to this source
+- Status, LastSeen, DaysSinceLastLog — calculated live by functions, never stored
+- DataConnector — reference only, logs tell the truth not the connector status
+
+
+---
+
+## Watchlist-Driven Variable Pattern — Core Methodology
+
+Every detection in this program should use watchlist values as variables wherever possible. The detection contains the logic. The watchlist contains the configuration. They never mix.
+
+**Why this matters:**
+- Same detection deploys to all ten clients
+- Each client gets their own thresholds and configuration from their watchlist
+- Changing a threshold means updating a watchlist row — never editing a detection
+- Onboarding a new client means uploading their watchlists — detections work immediately
+
+**The pattern:**
+```kql
+// Detection reads configuration from watchlist
+let config = _GetWatchlist('[mssname]-sources')
+| where SLS != "Missing"
+| project LogSource, Table, MonitoringFrequency;
+// Logic uses the config values as variables
+// Never hardcode thresholds, names, or values
+```
+
+**Apply this pattern to:**
+- Silent detection thresholds — MonitoringFrequency from [mssname]-sources
+- Critical asset checks — read from critical assets watchlist
+- Allowlists and blocklists — read from dedicated watchlists
+- Client-specific logic — read from [mssname]-client
+
+---
+
+## Onboarding Engine Vision — Next Project After Current Processes
+
+The watchlist-driven approach extends naturally into a complete client onboarding system. This is the next major project after the current process documentation and function building is complete.
+
+**The concept:**
+New client gets a pre-formatted guided spreadsheet. They fill in what they know. We fill in the technical fields. Upload the watchlists. The workbook and detections light up automatically.
+
+**The onboarding workbook tab shows:**
+- Which sources are documented and vetted
+- Which sources have functions configured
+- Which sources have silent detections assigned
+- Which SLA sources are active and healthy
+- Overall onboarding completion percentage — derived from watchlist state
+
+**No manual status tracking. No CSM spreadsheets. The data tells the truth.**
+
+The intake spreadsheet IS the watchlist template. Same fields. Same structure. Same format. It serves as both the onboarding intake form and the ongoing operational watchlist. Fill it in once. Use it forever.
+
+**Key insight:** The onboarding is complete when the workbook shows green across all required fields. That is the definition of done — not a checklist someone fills in manually.
