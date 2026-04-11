@@ -300,7 +300,7 @@ Five watchlists power the entire program. Every piece of data we need lives in o
 
 ### `[mssname]-tables` — Table Registry
 **Owner:** Platform team
-**Purpose:** One row per table. The backbone. Tells us what tables exist and whether any new ones have appeared. The table is treated as a pipe — just a container. No transport or ingestion details here.
+**Purpose:** One row per table. The backbone. Tells us what tables exist and whether any new ones have appeared. The table is treated as a pipe — just a container. All monitoring and operational detail lives in [mssname]-sources.
 
 | Field | What Goes Here |
 |---|---|
@@ -308,14 +308,13 @@ Five watchlists power the entire program. Every piece of data we need lives in o
 | Category | Security category |
 | Details | Broad context about this table — shared table, ASIM, single source, important notes |
 | Vetted | Yes / No — has this table been investigated and classified |
-| MonitoringFrequency | None / 1h / 5h / 15h / 24h / 48h — read by master table detection as variable |
 | Notes | Anything worth knowing at the table level |
 
 ---
 
 ### `[mssname]-sources` — Data Source Registry
 **Owner:** Platform team
-**Purpose:** One row per tracked data source within each table. This is where all the detail lives — transport, SLS, functions, connectors, DCR, DCE. Everything needed to monitor, troubleshoot, and report on each specific source.
+**Purpose:** One row per tracked data source. Every table gets at least one row here — single source tables get one row describing the whole table as a source, shared tables get one row per sub-source. This is where all monitoring lives — transport, SLS, functions, connectors, DCR, DCE, MonitoringFrequency. Everything needed to monitor, troubleshoot, and report on each specific source.
 
 | Field | What Goes Here |
 |---|---|

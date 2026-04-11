@@ -436,7 +436,7 @@ One dependency can affect multiple sources. Storing dependency details in the so
 The audit deck workbook serves two audiences. Client mode shows clean visualizations and plain English summaries. Internal MSSP mode shows full technical detail. Same functions, same data, different field projections in the workbook queries. Design every function to return all fields — the workbook query controls what is shown per mode.
 
 ### MonitoringFrequency Field
-Both `[mssname]-tables` and `[mssname]-sources` have a MonitoringFrequency field. Values: None / 1h / 5h / 15h / 24h / 48h. This field drives silent detection threshold configuration. A source with MonitoringFrequency = 24h gets a silent detection that fires if no data arrives in 24 hours. The silent detection reads this field from the watchlist — changing the threshold means updating the watchlist, not the detection KQL.
+MonitoringFrequency lives in `[mssname]-sources` only. It was removed from `[mssname]-tables` because every table now has at least one row in sources — monitoring is handled entirely at the source level. Values: None / 1h / 5h / 15h / 24h / 48h. The master source detection reads this field as a variable threshold. Changing a threshold means updating the watchlist row — never editing the detection KQL.
 
 
 ---
@@ -532,12 +532,13 @@ Table
 Category
 Details
 Vetted
-MonitoringFrequency
 Notes
 ```
 - DateAdded removed — tracked in SharePoint instead
 - Description renamed to Details — broader context at table level
 - Purpose removed — too granular for table level, lives in sources
+- MonitoringFrequency removed — all monitoring handled in [mssname]-sources
+- Every table gets at least one row in sources — table watchlist is pure pipe registry
 
 ### `[mssname]-sources` — FINAL
 ```
@@ -567,17 +568,17 @@ Notes
 
 Two detections cover all monitoring. No hardcoded values. Both read entirely from watchlists.
 
-**Detection 1 — Master Table Monitor**
-- Reads [mssname]-tables where MonitoringFrequency != None
-- Uses search * to get LastSeen per table
-- Fires per table that exceeds its MonitoringFrequency threshold
-- One detection covers all tables in every environment
-
-**Detection 2 — Master Source Monitor**
+**Detection 1 — Master Source Monitor**
 - Reads [mssname]-sources where MonitoringFrequency != None
 - Calls KQL sub-functions to get LastSeen per specific source
 - Fires per source that exceeds its MonitoringFrequency threshold
-- One detection covers all sources in every environment
+- One detection covers all sources including single source tables
+- Every table has at least one row in sources so all tables are covered
+
+Note: The separate master table detection is no longer needed.
+All monitoring is handled at the source level via [mssname]-sources.
+Single source tables have one sources row. Shared tables have one row
+per sub-source. The master source detection covers everything.
 
 **Custom SLS Detections — The Ceiling**
 - For sources needing specific logic or alerting beyond the master
@@ -595,4 +596,5 @@ let sources = _GetWatchlist('[mssname]-sources')
 // fire where HoursSinceLastLog > toint(MonitoringFrequency)
 ```
 
-Adding a new source to monitor = update the watchlist. Zero detection changes needed.
+Adding a new source to monitor = update [mssname]-sources. Zero detection changes needed.
+Adding a new table = add a row to [mssname]-tables AND at least one row to [mssname]-sources.

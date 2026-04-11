@@ -12,6 +12,8 @@
 
 ## Why We Do It This Way
 
+The sources watchlist is the single place where all monitoring lives. Every table gets at least one row here — single source tables get one row describing the whole table as a source, shared tables get one row per sub-source. This means the sources watchlist drives everything — health monitoring, silent detections, workbook data sources tab, audit deck.
+
 The sources watchlist needs rich information about each data source — what it is, where it comes from, what it detects, how often data arrives, and what connector or configuration is involved. This information exists in two places:
 
 **Detection KQL** — tells us exactly what data a detection needs to function. If a detection filters on `DeviceVendor == "Palo Alto Networks"` we know Palo Alto logs are a required source. The KQL is objective truth.
