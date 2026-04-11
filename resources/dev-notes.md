@@ -520,3 +520,79 @@ New client gets a pre-formatted guided spreadsheet. They fill in what they know.
 The intake spreadsheet IS the watchlist template. Same fields. Same structure. Same format. It serves as both the onboarding intake form and the ongoing operational watchlist. Fill it in once. Use it forever.
 
 **Key insight:** The onboarding is complete when the workbook shows green across all required fields. That is the definition of done — not a checklist someone fills in manually.
+
+
+---
+
+## Final Locked Field Sets
+
+### `[mssname]-tables` — FINAL
+```
+Table
+Category
+Details
+Vetted
+MonitoringFrequency
+Notes
+```
+- DateAdded removed — tracked in SharePoint instead
+- Description renamed to Details — broader context at table level
+- Purpose removed — too granular for table level, lives in sources
+
+### `[mssname]-sources` — FINAL
+```
+Table
+LogSource
+Category
+Origin
+Transport
+Description
+Purpose
+SLA
+DataConnector
+DCRName
+DCEName
+FunctionName
+SLS
+MonitoringFrequency
+Notes
+```
+- DateAdded removed — tracked in SharePoint instead
+- Description added — what this source is and what data it contains
+- Vetted removed — if it is in sources it is already vetted by definition
+
+---
+
+## Two Master Silent Detections — The Safety Net
+
+Two detections cover all monitoring. No hardcoded values. Both read entirely from watchlists.
+
+**Detection 1 — Master Table Monitor**
+- Reads [mssname]-tables where MonitoringFrequency != None
+- Uses search * to get LastSeen per table
+- Fires per table that exceeds its MonitoringFrequency threshold
+- One detection covers all tables in every environment
+
+**Detection 2 — Master Source Monitor**
+- Reads [mssname]-sources where MonitoringFrequency != None
+- Calls KQL sub-functions to get LastSeen per specific source
+- Fires per source that exceeds its MonitoringFrequency threshold
+- One detection covers all sources in every environment
+
+**Custom SLS Detections — The Ceiling**
+- For sources needing specific logic or alerting beyond the master
+- AB##### stored in the SLS field in [mssname]-sources
+- Master detection is the floor — custom SLS detection is the ceiling
+- Every source covered at minimum by master
+- High priority sources get dedicated detection on top
+
+**The pattern — no hardcoded values:**
+```kql
+let sources = _GetWatchlist('[mssname]-sources')
+| where MonitoringFrequency != "None"
+| project Table, LogSource, MonitoringFrequency;
+// join against live health check per source via sub-functions
+// fire where HoursSinceLastLog > toint(MonitoringFrequency)
+```
+
+Adding a new source to monitor = update the watchlist. Zero detection changes needed.

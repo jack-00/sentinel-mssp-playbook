@@ -306,10 +306,9 @@ Five watchlists power the entire program. Every piece of data we need lives in o
 |---|---|
 | Table | Exact table name |
 | Category | Security category |
-| Description | Plain English — what kind of data lands here |
-| DateAdded | When first documented |
-| Vetted | Yes / No |
-| MonitoringFrequency | None / 1h / 5h / 15h / 24h / 48h |
+| Details | Broad context about this table — shared table, ASIM, single source, important notes |
+| Vetted | Yes / No — has this table been investigated and classified |
+| MonitoringFrequency | None / 1h / 5h / 15h / 24h / 48h — read by master table detection as variable |
 | Notes | Anything worth knowing at the table level |
 
 ---
@@ -325,15 +324,15 @@ Five watchlists power the entire program. Every piece of data we need lives in o
 | Category | Security category |
 | Origin | What generated this data |
 | Transport | How it gets into Sentinel |
+| Description | What this source is and what kind of data it contains |
 | Purpose | One sentence — what does this detect or provide |
 | SLA | True / False — is this source part of the service level agreement |
 | DataConnector | Sentinel connector name if applicable — reference only, no status tracking |
 | DCRName | Data Collection Rule name if applicable |
 | DCEName | Data Collection Endpoint name if applicable |
 | FunctionName | KQL sub-function name — null means no function needed |
-| SLS | AB##### or Missing — the silent log source detection assigned to this source |
-| MonitoringFrequency | None / 1h / 5h / 15h / 24h / 48h — read by silent detection as variable |
-| DateAdded | When first documented |
+| SLS | AB##### or Missing — custom silent detection for this source if one exists |
+| MonitoringFrequency | None / 1h / 5h / 15h / 24h / 48h — read by master source detection as variable |
 | Notes | Technical notes, gotchas, environment specific context |
 
 ---
