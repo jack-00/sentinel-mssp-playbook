@@ -5,65 +5,37 @@
 > **Who uses this:** Any engineer building or updating the sources watchlist. Works with any capable LLM including internal company tools.
 >
 > **What you produce:**
-> 1. A sources investigation spreadsheet — your working reference during the process
-> 2. A completed `[mssname]-sources` watchlist spreadsheet ready for upload
-> 3. KQL sub-functions for all shared tables ready for deployment
+> 1. A completed `[mssname]-sources` watchlist spreadsheet ready for upload to Sentinel
+> 2. KQL sub-functions for all shared tables ready for deployment
 >
 > **Where outputs go:**
-> - Investigation spreadsheet → `02-Clients/[ClientName]/04-Watchlists/Current/`
-> - Sources watchlist spreadsheet → `02-Clients/[ClientName]/04-Watchlists/Current/`
+> - Completed spreadsheet → `02-Clients/[ClientName]/04-Watchlists/Current/`
 > - KQL functions → `02-Clients/[ClientName]/06-Functions/` and `01-Program/Functions/` if generic
+> - Master prompts → `01-Program/AI-Prompts/sources-watchlist-prompt.md`
 >
-> **Prerequisites:** Complete the data source audit runbook and upload `[mssname]-tables` before starting. You also need your completed `[mssname]-detections` spreadsheet — this is the starting point for everything in this process.
+> **Prerequisites:** Complete the data source audit runbook and upload `[mssname]-tables` before starting this process. You need to know what tables exist in the environment before documenting what sources write to them.
 >
 > **Last Updated:** April 2026
 
 ---
 
-## The Two Spreadsheets — Understanding the Relationship
-
-Before starting understand how the two spreadsheets relate to each other. They serve different purposes and feed different watchlists.
-
-**`[mssname]-detections` spreadsheet — already built:**
-- One row per detection
-- Fields: RuleId, AnalyticRule, Table, Watchlist, AlertClass, Description
-- Becomes the `[mssname]-detections` watchlist in Sentinel
-- Used by GetEnrichedInventory() to show detection coverage per source
-- Owned by detection team
-- Your starting point for this process — do not modify it
-
-**Sources investigation spreadsheet — what you build here:**
-- One row per log source
-- Built by feeding the detections spreadsheet to AI
-- Your working reference during investigation
-- Becomes the `[mssname]-sources` watchlist after investigation columns are removed
-- Owned by platform team
-
-**The relationship:**
-```
-[mssname]-detections spreadsheet
-        ↓ feed to AI — reorganize by table
-Sources investigation spreadsheet
-        ↓ investigate, verify, complete
-        ↓ remove investigation columns
-[mssname]-sources watchlist
-        ↓ GetEnrichedInventory() joins both watchlists
-Workbook shows detection coverage per source automatically
-```
-
----
-
 ## Why This Watchlist Exists and Why It Is Built This Way
 
-The sources watchlist is the most important watchlist in the system. Everything that makes the workbook valuable — health monitoring per source, detection coverage per source, silent detection coverage, the audit deck data sources tab — all of it reads from this watchlist.
+The sources watchlist is the most important watchlist in the entire system. Everything that makes the workbook valuable — health monitoring per source, detection coverage per source, silent detection coverage, the audit deck data sources tab — all of it reads from this watchlist.
 
-Every table gets at least one row here. Single source tables get one row. Shared tables get one row per distinct sub-source.
+Every table gets at least one row here. Single source tables get one row. Shared tables — AzureDiagnostics, CommonSecurityLog, Syslog — get one row per distinct sub-source within them.
 
 **Why we build it from detections:**
-We start from what we know for certain — our detections. Every detection queries specific tables and often filters on specific sub-sources. If a detection depends on a source that source is important. If it goes silent the detection goes blind. That is the clearest possible justification for tracking a source.
+
+We do not start by guessing what sources matter. We start from what we know for certain — our detections. Every detection queries specific tables and often filters on specific sub-sources within those tables. If a detection depends on a source then that source is important. If it goes silent the detection goes blind. That is the clearest possible justification for tracking a source.
+
+Building from detections also gives the AI the context it needs to produce accurate descriptions, purposes, and monitoring frequency recommendations — because it can see exactly what the data is being used for.
 
 **Why we think table-first not detection-first:**
-Multiple detections often query the same table and the same sub-source. Going detection by detection creates redundant rows and functions. The correct approach is:
+
+The natural instinct is to go through each detection one by one. The problem with this approach is that multiple detections often query the same table and the same sub-source within it. If you go detection by detection you end up writing the same function multiple times and creating redundant watchlist rows.
+
+The correct approach is to invert the thinking:
 
 ```
 Table
@@ -72,83 +44,124 @@ What unique sources write to this table
   ↓
 What detections depend on each source
   ↓
-One watchlist row per unique source
 One function per unique source
-Multiple detections share the same source and function
+One watchlist row per unique source
+Multiple detections can share the same source and function
 ```
+
+This produces zero redundancy. One function per shared table covering all its sub-sources. Every detection that depends on those sub-sources calls the same function.
+
+---
+
+## The Complete Workflow — Overview
+
+```
+Step 1 — Reorganize detections by table using AI
+Step 2 — Run breakout queries to see what is actually in the environment
+Step 3 — Train the AI with the full prompt
+Step 4 — Work through tables one by one — AI produces watchlist rows AND functions
+Step 5 — Transfer watchlist rows to spreadsheet as you go
+Step 6 — Save KQL functions to functions document as you go
+Step 7 — Handle tables without detections
+Step 8 — Handle pending client input sources
+Step 9 — Final review before upload
+Step 10 — Review and finalize functions
+Step 11 — Upload watchlist and deploy functions
+```
+
+---
+
+## The Two Spreadsheets and How They Relate
+
+Before starting understand the relationship between the two spreadsheets you will be working with.
+
+**`[mssname]-detections` spreadsheet — already built:**
+One row per detection. RuleId, AnalyticRule, Table, Watchlist, AlertClass, Description. This is your starting point and your input for this process. It also becomes the detections watchlist uploaded to Sentinel separately.
+
+**Sources investigation spreadsheet — what this process produces:**
+One row per log source. Built by the AI using the detections spreadsheet as input. This is your working reference during investigation and becomes the `[mssname]-sources` watchlist when complete.
+
+**The relationship:**
+```
+[mssname]-detections spreadsheet
+        ↓ feed to AI — reorganize by table
+Sources investigation spreadsheet  ← working reference
+        ↓ remove investigation columns
+[mssname]-sources watchlist upload
+        ↓ GetEnrichedInventory() joins both
+Workbook shows detection coverage per source
+```
+
+---
+
+## Spreadsheet Naming
+
+**Working investigation spreadsheet — used during this process:**
+```
+[ClientName]-sources-investigation-[YYYY-MM-DD].xlsx
+```
+Save to: `02-Clients/[ClientName]/04-Watchlists/Current/`
+
+**Final upload spreadsheet — created when investigation is complete:**
+```
+[ClientName]-sources-[YYYY-MM-DD].xlsx
+```
+Remove the four investigation columns before saving this version. Upload this one as the watchlist.
 
 ---
 
 ## Standards and Taxonomy
 
-Approved values for every field. The AI uses these — know them so you can verify AI output.
+Before starting know the approved values for every field. The AI uses these — knowing them helps you verify its output.
 
-**Category:** Identity / Endpoint / Email / Network / Firewall / Cloud Infrastructure / SaaS Application / Threat Intelligence / Compliance and Audit / Vulnerability Management / Authentication / Capabilities / Other
+**Category — choose one:**
+Identity / Endpoint / Email / Network / Firewall / Cloud Infrastructure / SaaS Application / Threat Intelligence / Compliance and Audit / Vulnerability Management / Authentication / Capabilities / Other
 
-**Origin:** Microsoft Entra ID / Microsoft 365 / Microsoft Defender / Microsoft Azure / Microsoft Sentinel / Windows OS / Network Device / AWS / Salesforce / Zoom / Keeper Security / SecureW2 / Drupal / Multiple Sources / Custom / Unknown
+**Origin — choose one:**
+Microsoft Entra ID / Microsoft 365 / Microsoft Defender / Microsoft Azure / Microsoft Sentinel / Windows OS / Network Device / AWS / Salesforce / Zoom / Keeper Security / SecureW2 / Drupal / Multiple Sources / Custom / Unknown
 
-**Transport:** Microsoft Connector / XDR Connector / AMA — DCR / AMA — DCR — DCE / CEF — AMA — DCR / Cribl — AMA — DCR / Cribl — DCR / Diagnostic Setting / Logic App — Polling / Logic App — Webhook / REST API — Push / TAXII — Polling / Sentinel Native / ASIM Parser / Application Insights SDK
+**Transport — choose one:**
+Microsoft Connector / XDR Connector / AMA — DCR / AMA — DCR — DCE / CEF — AMA — DCR / Cribl — AMA — DCR / Cribl — DCR / Diagnostic Setting / Logic App — Polling / Logic App — Webhook / REST API — Push / TAXII — Polling / Sentinel Native / ASIM Parser / Application Insights SDK
 
 **SLA:** True / False
 
 **MonitoringFrequency:** None / 1h / 5h / 15h / 24h / 48h
 
-**SLS:** OC##### or Missing
-
-**Tier:** 1 / 2 / 3 / 4 — see silent-detection-standards.md for the decision tree
+**SLS:** AB##### or Missing
 
 ---
 
 ## Prerequisites — Have These Ready
 
-1. **`[mssname]-detections` spreadsheet** — your existing detections catalog
-2. **Sources investigation spreadsheet** — new, open with headers listed below
-3. **Functions document** — new file called `functions-in-progress.kql` in `02-Clients/[ClientName]/06-Functions/`
-4. **Text editor** — staging area before sending to AI
-5. **A capable LLM** — use your internal company LLM for client-specific information
-
-**Sources investigation spreadsheet headers — in this exact order:**
+1. **Detections spreadsheet** — your `[mssname]-detections` spreadsheet with RuleId, AnalyticRule, Table, Watchlist, AlertClass, Description
+2. **Sources investigation spreadsheet** — open with these column headers in this exact order:
 ```
 Table, LogSource, Category, Origin, Transport, Description,
 Purpose, SLA, DataConnector, DCRName, DCEName, FunctionName,
 SLS, MonitoringFrequency, Notes, Tier, Status, Verified, ActionItems
 ```
+The first fifteen columns match `[mssname]-sources` exactly and become the watchlist upload. The last four are investigation working fields removed before upload:
+- **Tier** — 1 / 2 / 3 / 4 — silent detection tier per silent-detection-standards.md
+- **Status** — what the live environment shows — Active / Inactive / Review / No Data
+- **Verified** — Yes / No — confirmed against live environment
+- **ActionItems** — missing DCR, SLS detection needed, pending client input etc
 
-Save this immediately as:
-```
-[ClientName]-sources-investigation-[YYYY-MM-DD].xlsx
-```
-
-Format as an Excel Table with Ctrl+T before adding any data.
-
----
-
-## The Complete Workflow
-
-```
-Step 1  — Reorganize detections by table using AI
-Step 2  — Build the pivot table working reference
-Step 3  — Run breakout queries for shared tables
-Step 4  — Train the AI with the full prompt
-Step 5  — Work through tables one by one
-Step 6  — Transfer CSV output to investigation spreadsheet
-Step 7  — Save KQL functions as you go
-Step 8  — Handle tables without detections
-Step 9  — Handle pending client input
-Step 10 — Assign tiers and complete investigation fields
-Step 11 — Final review before upload
-Step 12 — Review and finalize functions
-Step 13 — Create the upload-ready watchlist
-Step 14 — Upload watchlist and deploy functions
-```
+3. **Functions document** — a new file called `functions-in-progress.kql` in the client's `06-Functions` folder in SharePoint
+4. **Text editor** — staging area for input before sending to AI
+5. **A capable LLM** — use your internal company LLM for anything involving client-specific information
 
 ---
 
 ## Step 1 — Reorganize Detections by Table
 
-Your detections spreadsheet has comma separated table names per detection. A detection querying three tables appears once but belongs under all three. You need a table-first view before you can work systematically.
+Your detections spreadsheet has a Table field with comma separated table names. A detection that queries three tables appears once in the spreadsheet but belongs under all three tables. A simple Excel sort does not handle this cleanly.
 
-**Feed the entire detections CSV to AI with this prompt:**
+**Why this step matters:**
+Before you can work table by table you need a clear view of which detections belong to which table. This prevents redundancy — you will see that multiple detections share the same table, which tells you they may share the same source and therefore the same function.
+
+**How to do it — feed the entire detections CSV to AI:**
+
+Copy your entire detections CSV content and paste it to the AI with this prompt:
 
 ```
 I have a detection catalog with these columns:
@@ -157,138 +170,205 @@ RuleId, AnalyticRule, Table, Watchlist, AlertClass, Description
 The Table field contains comma separated table names — one detection
 may query multiple tables.
 
-Please reorganize this into a table-first view showing which
-detections depend on each table.
+Please reorganize this into a table-first view where I can see
+each table and which detections depend on it.
 
 Output as a simple two column list:
 
 Table | Detections
 AzureDiagnostics | OC00034 - Detection Name, OC00041 - Detection Name
 SignInLogs | OC00012 - Detection Name, OC00019 - Detection Name
+CommonSecurityLog | OC00055 - Detection Name
 
 Rules:
 - If a detection queries multiple tables list it under each table
 - Group all detections for the same table on one row comma separated
-- Include RuleId and rule name for each detection
 - Sort tables alphabetically
-- If a detection uses Table = All list it separately at the bottom
-  under a heading called: All Tables — Workspace Wide Detections
+- Include the RuleId and rule name for each detection
 ```
 
-Save this output — it is your working map for the entire process.
+The AI returns a clean table-first reference. Save this — it is your working map for the rest of this process. You will go through it table by table.
 
 ---
 
-## Step 2 — Build the Pivot Table Working Reference
+## Step 2 — Run Breakout Queries for Shared Tables
 
-Take the two-column table-first output from Step 1 and paste it into a new Excel sheet. Format as a table with Ctrl+T. This is your visual reference as you work through each table.
+For shared tables — AzureDiagnostics, CommonSecurityLog, Syslog, ThreatIntelIndicators, and ASIM tables — you need to know what is actually writing to that table in this specific environment before the AI can produce accurate output.
 
-You now have two views open:
-- **Detections spreadsheet** — the detail per detection
-- **Pivot table** — the table-first view showing which tables need to be processed
+**Why this step matters:**
+The AI writes functions based on detection KQL. But the detection may only filter on one sub-source within a shared table. The environment may have other sub-sources that no detection currently covers but that still need to be tracked. Without running the breakout query you would miss those sources entirely.
 
-Work through the pivot table top to bottom. One table at a time.
+**How to do it:**
+For each shared table in your table-first reference run the appropriate breakout query from `resources/scratch.md`. Those queries are organized by table — AzureDiagnostics Level 1 and Level 2, CommonSecurityLog Level 1 and Level 2, Syslog, ThreatIntelIndicators, and all ASIM tables.
 
----
+Note what you find. You will include this information when you feed the table to the AI in Step 4.
 
-## Step 3 — Run Breakout Queries for Shared Tables
-
-For shared tables — AzureDiagnostics, CommonSecurityLog, Syslog, ThreatIntelIndicators, and ASIM tables — run the breakout queries from `resources/scratch.md` against the live environment before feeding anything to the AI.
-
-**Why this matters:**
-The AI writes based on detection KQL. But detections may only cover some sub-sources within a shared table. The environment may have additional sub-sources that no detection covers. Without the breakout query you would miss those sources entirely.
-
-Note what you find. You will include this when feeding the table to the AI in Step 5.
-
-For single source tables — SignInLogs, AuditLogs, SecurityEvent, all Device tables — skip this step.
+**For single source tables** — SignInLogs, AuditLogs, SecurityEvent, OfficeActivity and all the Device tables — skip this step. There is only one source writing to these tables. The detection KQL is sufficient context for the AI.
 
 ---
 
-## Step 4 — Train the AI
+## Step 3 — Train the AI
 
-Paste this entire prompt at the start of every session. Wait for confirmation before proceeding.
+Paste this entire prompt into the AI at the start of every session. The prompt runs as a two-phase conversation. Phase 1 the AI receives your detections spreadsheet and outputs a reorganized CSV. Phase 2 it switches into table-by-table processing mode and tells you exactly what to send next.
 
 ---
 
-**TRAINING PROMPT:**
+**TRAINING PROMPT — paste this first, nothing else:**
 
 ```
-I am building a data source tracking system for Microsoft Sentinel.
-I will provide you with information about one table at a time. For each
-table I will give you:
-- The table name
-- All detections that query this table with their full KQL
-- For shared tables — what the live environment breakout query shows
-  is actually writing to this table
+CRITICAL OUTPUT RULE: You will only output raw CSV rows and KQL code blocks.
+No prose. No bullet points. No markdown formatting. No explanations before
+or after outputs. If you feel the urge to explain something put it inside
+the Notes CSV field instead. Raw CSV and code only.
 
-You will analyze everything together and produce two types of output.
+I am helping build a data source tracking system for Microsoft Sentinel.
+This is a two phase process. I will guide you through each phase.
 
 ═══════════════════════════════════════
-OUTPUT TYPE 1 — CSV ROWS
+PHASE 1 — RECEIVE DETECTIONS AND OUTPUT CSV
 ═══════════════════════════════════════
 
-Produce one CSV row per unique log source the detections depend on.
+I will paste a detection catalog with these columns:
+RuleId, AnalyticRule, Table, Watchlist, AlertClass, Description
 
-Important: Think table-first not detection-first. Multiple detections
-may depend on the same source. One row per unique source — not one
-per detection. If three detections all query Azure Firewall data
-within AzureDiagnostics that is one row — not three.
+The Table field has comma separated table names. One detection
+may query multiple tables.
 
-Output as CSV with these exact column headers in this exact order:
-Table,LogSource,Category,Origin,Transport,Description,Purpose,SLA,DataConnector,DCRName,DCEName,FunctionName,SLS,MonitoringFrequency,Notes,Tier,Status,Verified,ActionItems
+When I paste the detection catalog:
+1. Read every detection and every table it queries
+2. Reorganize into a table-first view
+3. Output a CSV with exactly these two columns:
 
-Rules for each field:
+Table,Detections
 
-Table: exact table name as provided
-LogSource: plain English name of this specific source within the table
-Category: Identity / Endpoint / Email / Network / Firewall / Cloud Infrastructure / SaaS Application / Threat Intelligence / Compliance and Audit / Vulnerability Management / Authentication / Capabilities / Other
-Origin: Microsoft Entra ID / Microsoft 365 / Microsoft Defender / Microsoft Azure / Microsoft Sentinel / Windows OS / Network Device / AWS / Salesforce / Zoom / Keeper Security / SecureW2 / Drupal / Multiple Sources / Custom / Unknown
-Transport: Microsoft Connector / XDR Connector / AMA — DCR / CEF — AMA — DCR / Diagnostic Setting / Logic App — Polling / REST API — Push / TAXII — Polling / Sentinel Native / ASIM Parser / other if none fit
-Description: 2-3 sentences describing what this source is. Be specific — use table name context and detection logic together. Not generic.
-Purpose: one sentence — what attack or risk does this help detect based on what detections are doing with it
-SLA: True if primary security source a client would expect monitored — False if supporting or operational
-DataConnector: best guess at the Sentinel connector name based on table and origin
+Rules:
+- One row per unique table
+- If a detection queries multiple tables list it under each table
+- Detections column lists all detections for that table comma
+  separated — include RuleId and name like:
+  OC00034 - Detection Name, OC00041 - Detection Name
+- Sort rows alphabetically by Table
+- Output only the CSV — no explanation, no markdown
+- After the CSV output say exactly:
+  PHASE 1 COMPLETE. Copy the CSV above into a spreadsheet.
+  When you are ready for Phase 2 type: READY
+
+═══════════════════════════════════════
+PHASE 2 — TABLE BY TABLE PROCESSING
+═══════════════════════════════════════
+
+When I type READY switch to Phase 2 mode and say:
+"Ready for Phase 2. Send me one table at a time in this order:
+
+  TABLE NAME
+
+  Detection name
+  Full KQL query
+
+  Detection name
+  Full KQL query
+
+  ENVIRONMENT DATA:
+  Results from live breakout query showing what is actually
+  writing to this table in the environment.
+
+  Send the table name first followed by each detection name
+  and its full KQL query. Then add ENVIRONMENT DATA if you
+  have breakout results. I will process one table at a time."
+
+For each table I send produce two outputs:
+
+───────────────────────────────────────
+OUTPUT 1 — CSV ROWS
+───────────────────────────────────────
+
+One row per unique source — not one per detection. Multiple
+detections may depend on the same source. If three detections
+all query Azure Firewall data that is one row not three.
+
+On the very first table only output the header row:
+Table,LogSource,Category,Origin,Transport,Description,Purpose,SLA,DataConnector,DCRName,DCEName,FunctionName,SLS,MonitoringFrequency,Tier,Verified,ActionItems,Confidence,Notes
+
+Then one data row per unique source found. Use these approved values:
+
+Category: Identity / Endpoint / Email / Network / Firewall /
+  Cloud Infrastructure / SaaS Application / Threat Intelligence /
+  Compliance and Audit / Vulnerability Management / Authentication /
+  Capabilities / Other
+
+Origin: Microsoft Entra ID / Microsoft 365 / Microsoft Defender /
+  Microsoft Azure / Microsoft Sentinel / Windows OS / Network Device /
+  AWS / Salesforce / Zoom / Keeper Security / SecureW2 / Drupal /
+  Multiple Sources / Custom / Unknown
+
+Transport: Microsoft Connector / XDR Connector / AMA - DCR /
+  CEF - AMA - DCR / Diagnostic Setting / Logic App - Polling /
+  REST API - Push / TAXII - Polling / Sentinel Native / ASIM Parser
+
+SLA: True or False
+DataConnector: best educated guess from table name and origin
 DCRName: Unknown
 DCEName: Unknown
-FunctionName: Get[TableName]Health for shared tables — None for single source tables
+FunctionName: Get[TableName]Health for shared tables / None for single source
 SLS: Missing
-MonitoringFrequency: 1h for continuous identity/pipeline sources / 5h for network and firewall / 15h for endpoint / 24h for daily batch / 48h for less frequent / None if not appropriate
-Notes: anything an engineer should know — misconfigurations, gotchas, things to verify. Include your reasoning for MonitoringFrequency choice.
-Tier: 1 if an OC detection depends on this source or it feeds a capability — 2 if high investigation value or custom integration — 3 if ASIM or capability output — 4 if no dependencies
-Status: [leave blank — engineer fills in from live environment]
+
+MonitoringFrequency:
+  1h = continuous real-time
+  5h = near-continuous
+  15h = business-hours active
+  24h = daily batch
+  48h = less frequent
+  None = monitoring not needed
+
+Tier:
+  1 = OC-series detection depends on this source
+  2 = high value but no current detection
+  3 = ASIM or capability output
+  4 = no dependencies and no compliance requirement
+
 Verified: No
-ActionItems: [leave blank — engineer fills in]
+ActionItems: flags for engineer — Unknown DCR / SLS needed /
+  verify in environment / pending client input
+Confidence: High / Medium / Low — how confident in MonitoringFrequency
+  and Tier assignments. Briefly explain reasoning.
+Notes: misconfigurations gotchas things to verify.
 
-Output the header row first then one data row per unique source.
-No explanation before or after. Just the CSV.
+Special rules:
+- If detection uses search * or union * with no table filter:
+  LogSource = All Tables — workspace wide detection
+  FunctionName = None
+- If ENVIRONMENT DATA shows sources no detection covers
+  still include them — they may need monitoring
+- Wrap any field containing commas in double quotes
 
-═══════════════════════════════════════
-OUTPUT TYPE 2 — KQL SUB-FUNCTION
-═══════════════════════════════════════
+───────────────────────────────────────
+OUTPUT 2 — KQL SUB-FUNCTION
+───────────────────────────────────────
 
-After the CSV rows write a KQL sub-function IF this is a shared table.
+Write a sub-function ONLY for shared tables where multiple
+distinct sources write and are identified by filtering on
+a specific field:
+- AzureDiagnostics — ResourceType and Category
+- CommonSecurityLog — DeviceVendor and DeviceProduct
+- Syslog — HostName
+- ThreatIntelIndicators — SourceSystem
+- ASimNetworkSessionLogs — EventVendor and EventProduct
+- ASimAuditEventLogs — EventVendor and EventProduct
+- ASimWebSessionLogs — EventVendor and EventProduct
 
-Shared tables:
-- AzureDiagnostics — filtered by ResourceType and Category
-- CommonSecurityLog — filtered by DeviceVendor and DeviceProduct
-- Syslog — filtered by HostName
-- ThreatIntelIndicators — filtered by SourceSystem
-- ASimNetworkSessionLogs, ASimAuditEventLogs, ASimWebSessionLogs
-  — filtered by EventVendor and EventProduct
-
-Do NOT write a sub-function for single source tables.
+Do NOT write a sub-function for single source tables like
+SignInLogs AuditLogs SecurityEvent OfficeActivity Device* tables.
 
 Every sub-function MUST return exactly these four columns:
 Table, LogSource, LastSeen, Status
 
-The LogSource value in the function must match the LogSource value
-in the CSV rows exactly — this is the join key.
+The LogSource value in the function must exactly match the
+LogSource value in the CSV row — this is the join key.
 
 Use this exact structure:
 
----FUNCTION---
+---FUNCTION START---
 // Get[TableName]Health()
-// Sub-function for [TableName]
 // Output contract: Table, LogSource, LastSeen, Status
 union
 (
@@ -310,44 +390,97 @@ union
     "No Data"
 )
 | project Table, LogSource, LastSeen, Status
----END FUNCTION---
+---FUNCTION END---
+
+───────────────────────────────────────
+AFTER EACH TABLE
+───────────────────────────────────────
+
+After each table say exactly:
+"Table complete. Send the next table when ready."
+
+Do not process the next table until I send new data.
 
 ═══════════════════════════════════════
-IMPORTANT RULES
+CONFIRM
 ═══════════════════════════════════════
 
-1. One CSV row per unique source — not one per detection
-
-2. LogSource in CSV and in function extend must match exactly
-
-3. If a detection uses search * or union * with no table filter:
-   LogSource: All Tables — workspace wide detection
-   FunctionName: None
-   Do not write a sub-function
-
-4. If breakout results show sources no detection currently covers
-   still include them in the CSV and function
-
-5. Use table name AND detection KQL AND breakout results together
-
-6. Write descriptions naturally — not filling in a form
-
-Confirm you understand before I provide any data.
+Confirm you understand the two phase process. Then say:
+"Ready for Phase 1. Please paste your detection catalog now."
 ```
 
 ---
 
-## Step 5 — Work Through Tables One by One
+Wait for the AI to say it is ready for Phase 1 before pasting anything.
 
-Use your pivot table from Step 2 as your guide. For each table:
+---
 
-1. Open your text editor
-2. Write the table name at the top
-3. For each detection listed under this table add the detection name and full KQL
-4. For shared tables add the breakout results below the detections
-5. Copy everything and paste to the AI
+## Step 3B — Set Up Your Working Spreadsheet
 
-**Input format:**
+After Phase 1 completes the AI outputs a two-column CSV showing each table and its detections. Before moving to Phase 2 set up your working spreadsheet.
+
+**Name the spreadsheet:**
+```
+[ClientName]-sources-investigation-[YYYY-MM-DD].xlsx
+```
+
+**Open a new Excel workbook and set up two tabs:**
+
+**Tab 1 — Sources** — this is where Phase 2 CSV output goes. As the AI produces rows for each table paste them here. By the end of Phase 2 this tab has one row per source across all tables.
+
+**Tab 2 — Table Map** — paste the Phase 1 CSV output here. This is your working reference showing which detections belong to each table. You will refer to this as you work through Phase 2.
+
+**After pasting Phase 2 output into Tab 1:**
+1. Click any cell in the data
+2. Press **Ctrl+T** to format as Excel Table
+3. Click OK
+4. This makes filtering and sorting work cleanly
+
+**Upload to SharePoint immediately:**
+Upload the workbook to SharePoint before filling in anything:
+```
+02-Clients/[ClientName]/04-Watchlists/Current/
+```
+This is your baseline snapshot before investigation.
+
+**The investigation columns — Tab 1 will have these extra fields beyond the watchlist:**
+- **Tier** — assign using the silent detection tier framework in `08-silent-detections/silent-detection-standards.md`
+- **Verified** — change from No to Yes after you confirm the source against the live environment
+- **ActionItems** — update as you investigate — missing DCR names, SLS detections needed, pending client input
+- **Confidence** — AI's confidence in MonitoringFrequency and Tier — Low means you need to verify before accepting
+
+**When investigation is complete and ready for watchlist upload:**
+1. Make a copy of Tab 1
+2. Delete the four investigation columns: Tier, Verified, ActionItems, Confidence
+3. Save the copy as:
+```
+[ClientName]-sources-[YYYY-MM-DD].xlsx
+```
+4. Upload this as the `[mssname]-sources` watchlist
+5. Keep the investigation workbook in SharePoint for reference
+
+---
+
+## Step 4 — Work Through Tables One by One
+
+Once the AI confirms it is in Phase 2 mode it will tell you exactly what format to send. Work through the table-first CSV from Phase 1 in order — one table at a time.
+
+**For each table type READY then send this in your text editor:**
+
+```
+TABLE NAME
+
+Detection name
+Full KQL query
+
+Detection name
+Full KQL query
+
+ENVIRONMENT DATA:
+[paste breakout query results here for shared tables]
+```
+
+**Example:**
 ```
 AzureDiagnostics
 
@@ -361,29 +494,56 @@ OC12346 - Key Vault Secret Access Anomaly
 AzureDiagnostics
 | where ResourceType == "VAULTS"
 | where Category == "AuditEvent"
+| where OperationName == "SecretGet"
 
-ENVIRONMENT BREAKOUT RESULTS:
-ResourceType = AZUREFIREWALLS — Categories: ApplicationRule, NetworkRule, DnsProxy, ThreatIntelLog
-ResourceType = VAULTS — Categories: AuditEvent
+ENVIRONMENT DATA:
+ResourceType = AZUREFIREWALLS — Categories seen: ApplicationRule, NetworkRule, DnsProxy, ThreatIntelLog
+ResourceType = VAULTS — Categories seen: AuditEvent
 ```
 
+**For single source tables** — SignInLogs, AuditLogs, SecurityEvent etc — you do not need ENVIRONMENT DATA. Just the table name and detections.
+
+**Why include all detections for a table together:**
+The AI sees the full picture and can identify distinct sub-sources accurately. If two detections both query Azure Firewall it produces one row not two.
+
+**Why include ENVIRONMENT DATA for shared tables:**
+The detections may only cover some sub-sources present in the environment. The breakout results tell the AI what else exists so it can include those sources too — even if no detection currently covers them.
+
+**After each table:**
+The AI outputs the CSV rows and the KQL function if needed. Then says Table complete. You paste the next table. Repeat until all tables are done.
+
 ---
 
-## Step 6 — Transfer CSV Output to Investigation Spreadsheet
+## Step 5 — Build the Working Spreadsheet from CSV Output
 
-The AI outputs a CSV block. Copy it and paste directly into your investigation spreadsheet. Excel will ask how to split it — choose comma delimited.
+After Phase 1 completes copy the CSV output and paste it into a new spreadsheet. This is your working investigation spreadsheet — not the final upload yet.
 
-Do this immediately after each table. Do not let output accumulate.
+**Spreadsheet name:**
+```
+[ClientName]-sources-investigation-[YYYY-MM-DD].xlsx
+```
+
+**After pasting Phase 1 CSV:**
+1. Format as Excel Table — Ctrl+T
+2. Save to SharePoint at `02-Clients/[ClientName]/04-Watchlists/Current/`
+
+**As you work through each table in Phase 2:**
+Copy the CSV rows the AI outputs for each table and paste them into this same spreadsheet. The header row was output on the first table — do not paste it again for subsequent tables. Just paste the data rows.
 
 **Fields to always review before accepting:**
-- **MonitoringFrequency** — AI makes an educated guess. Override if you know the actual pattern.
-- **SLA** — AI guesses. You decide based on service commitment.
-- **Tier** — AI guesses based on whether a detection depends on it. Verify against the decision tree in `08-silent-detections/silent-detection-standards.md`.
+- **MonitoringFrequency** — AI makes an educated guess. Check the Notes field for its reasoning. If you know the actual ingestion pattern override it.
+- **SLA** — AI guesses based on source nature. You decide based on service commitment to this client.
 - **DataConnector** — verify against what is actually configured in this environment.
+- **Tier** — review each assignment using the decision tree in `08-silent-detections/silent-detection-standards.md`.
+- **DCRName and DCEName** — fill these in from the environment. Replace Unknown with actual values.
+
+**The investigation columns — review and complete:**
+- **Verified** — change to Yes after you have confirmed this source exists in the live environment
+- **ActionItems** — work through each flag — missing DCR, SLS detection needed, pending client input
 
 ---
 
-## Step 7 — Save KQL Functions As You Go
+## Step 6 — Save KQL Functions
 
 Paste each sub-function into `functions-in-progress.kql` with a comment header:
 
@@ -394,13 +554,27 @@ Paste each sub-function into `functions-in-progress.kql` with a comment header:
 // Verify filter conditions against actual environment
 // ============================================================
 [paste function here]
+
+
+// ============================================================
+// GetCommonSecurityLogHealth()
+// Generated: [date]
+// ============================================================
+[paste function here]
 ```
+
+**Important:** The AI writes functions based on detection KQL and breakout results. After completing all tables review each function and verify the filter conditions match what is actually in the environment. Use the breakout queries to confirm.
 
 ---
 
-## Step 8 — Handle Tables Without Detections
+## Step 7 — Handle Tables Without Detections
 
-Some sources need to be tracked even though no current detection uses them. Compliance requirements, capability dependencies, baseline requirements, client requests.
+Some sources need to be in the watchlist even though no current detection uses them. These come from:
+
+- Client compliance requirements — log types mandated by PCI-DSS, HIPAA etc
+- Capability dependencies — UEBA, Threat Intelligence, Fusion ML
+- Baseline requirements — data that should be collected as good practice
+- Client-specific requests from the intake questionnaire
 
 For these use this prompt:
 
@@ -410,79 +584,77 @@ currently have a custom detection but is being tracked for other reasons.
 
 Table: [table name]
 Reason for tracking: [compliance / UEBA dependency / client request / baseline]
-Any context: [anything you know]
+Any context: [anything you know about this source]
 
-Please produce a CSV row using the same format and column order as before.
-Output the header row and one data row only.
-For PURPOSE base it on what this source is generally used for in
-security monitoring.
-Do not write a sub-function unless it is a shared table.
+Please produce a watchlist row block using the same format as before.
+For PURPOSE base it on what this data source is generally used for
+in security monitoring even if no specific detection currently uses it.
+Do not write a sub-function for this request unless it is a shared
+table with multiple sources.
 ```
 
 ---
 
-## Step 9 — Handle Pending Client Input
+## Step 8 — Handle Pending Client Input
 
-Some sources only become known after the client returns their intake questionnaire. Mark these:
+Some sources will only be known after the client returns their intake questionnaire. Mark these rows:
 
 ```
-Verified: No
-ActionItems: Pending client input — [what you need from them]
+Notes: [Pending - client input]
 ```
+
+Return to them after the questionnaire is received.
 
 ---
 
-## Step 10 — Complete Investigation Fields
+## Step 9 — Prepare Upload Version
 
-After all tables are processed go through every row and complete the investigation fields:
+Before uploading create a clean copy of the spreadsheet with the investigation columns removed.
 
-**Status** — run a quick query per table in the live environment and record what you see:
-```kql
-[TableName]
-| where TimeGenerated > ago(24h)
-| summarize LastSeen = max(TimeGenerated), Count = count()
+**Remove these columns — investigation use only:**
+- Tier
+- Verified
+- ActionItems
+
+**Save the upload version as:**
+```
+[ClientName]-sources-[YYYY-MM-DD].xlsx
 ```
 
-**Verified** — change to Yes once you have confirmed the source exists in the environment and the details are accurate
-
-**ActionItems** — document anything that still needs to be done:
-- `SLS detection needed — Tier 1`
-- `DCRName unknown — check Azure Monitor`
-- `Pending client input on compliance requirement`
-- `Breakout shows additional ResourceType not yet documented`
-
-**DCRName and DCEName** — fill in from the Azure portal for AMA-based sources
+Keep the investigation version. The upload version is what goes to Sentinel.
 
 ---
 
-## Step 11 — Final Review Before Upload
+## Step 10 — Final Review Before Upload
 
-Check every row:
+Before uploading check every row:
 
-- [ ] Table matches exactly what appears in `[mssname]-tables`
+- [ ] Table matches exactly what appears in `[mssname]-tables` watchlist
 - [ ] LogSource is plain English and descriptive
-- [ ] All Category, Origin, Transport values from approved list
+- [ ] Category is from the approved list
+- [ ] Origin is from the approved list
+- [ ] Transport is from the approved list
 - [ ] Description is 2-3 sentences — specific not generic
-- [ ] Purpose is one sentence for a business audience
+- [ ] Purpose is one sentence written for a business audience
 - [ ] SLA is True or False — nothing blank
 - [ ] MonitoringFrequency is set — nothing blank
-- [ ] No Unknown placeholders in DCRName or DCEName — fill in or write N/A
-- [ ] FunctionName matches actual function name you will deploy
-- [ ] Tier is assigned for every row
-- [ ] Verified = Yes for every row — or ActionItems explains why not
+- [ ] No [Manual] or Unknown placeholders in required fields
+- [ ] DCRName and DCEName filled in from environment or N/A
+- [ ] FunctionName matches the actual function name you will deploy
 
 ---
 
-## Step 12 — Review and Finalize Functions
+## Step 11 — Review and Finalize Functions
 
-Before deploying functions verify each one:
+Before deploying functions to Sentinel review each one:
 
+- [ ] Function name follows the convention: Get[TableName]Health()
 - [ ] Returns exactly four columns: Table, LogSource, LastSeen, Status
-- [ ] LogSource values match sources watchlist exactly
 - [ ] Filter conditions verified against live environment
-- [ ] All expected sub-sources included
+- [ ] All expected sub-sources included — add any missing ones
+- [ ] LogSource values in function match LogSource values in sources watchlist exactly
 
-**Verify filter conditions:**
+**Verify filter conditions against live data:**
 ```kql
 // Example for AzureDiagnostics
 AzureDiagnostics
@@ -491,30 +663,27 @@ AzureDiagnostics
 | order by Count desc
 ```
 
----
-
-## Step 13 — Create the Upload-Ready Watchlist
-
-Once investigation is complete create a clean copy for upload:
-
-1. Save the investigation spreadsheet — keep it as your reference
-2. Create a copy named:
-```
-[ClientName]-sources-[YYYY-MM-DD].xlsx
-```
-3. In the copy delete these four columns:
-   - Tier
-   - Status
-   - Verified
-   - ActionItems
-4. The remaining fifteen columns are the watchlist
+Add any combinations found here that are not already in the function.
 
 ---
 
-## Step 14 — Upload Watchlist and Deploy Functions
+## Step 12 — Prepare Final Upload Spreadsheet and Upload
+
+**Remove investigation columns before uploading:**
+1. Make a copy of the investigation spreadsheet
+2. Name the copy: `[ClientName]-sources-[YYYY-MM-DD].xlsx`
+3. Delete these four columns: Tier, Status, Verified, ActionItems
+4. The remaining fifteen columns match `[mssname]-sources` exactly
+5. Save to `02-Clients/[ClientName]/04-Watchlists/Current/`
+
+**Upload the fifteen-column version as the watchlist — not the investigation spreadsheet.**
+
+---
+
+## Step 13 — Upload Watchlist and Deploy Functions
 
 **Watchlist upload:**
-1. Export the upload-ready spreadsheet as CSV
+1. Export spreadsheet as CSV
 2. Sentinel → Watchlists → Create new
 3. Name: `[mssname]-sources`
 4. Upload CSV
@@ -527,25 +696,25 @@ _GetWatchlist('[mssname]-sources')
 
 **Function deployment:**
 1. In Sentinel navigate to Logs
-2. Run each function KQL — verify no errors
+2. Run each function KQL to verify it executes without errors
 3. Click Save → Save as function
 4. Name exactly as defined — `GetAzureDiagnosticsHealth` etc
-5. Save KQL files to `01-Program/Functions/` in SharePoint
+5. Save final KQL files to `01-Program/Functions/` in SharePoint
 
 ---
 
 ## Tips for Best Output
 
-**Include breakout results for shared tables.** Without them the AI only knows what detections cover — not what else is in the environment.
+**Include breakout results for shared tables.** This is the most important tip. Without it the AI only knows what detections currently cover — not what else is in the environment.
 
 **Include all detections for a table together.** The AI sees the complete picture and avoids redundant rows.
 
-**One table at a time.** Do not batch multiple tables.
+**One table at a time.** Do not batch multiple tables. Output stays clean and traceable.
 
-**Paste CSV output directly into Excel.** Use Data → Text to Columns if Excel does not split automatically. Choose comma delimited.
+**Trust your knowledge over AI for MonitoringFrequency.** If you know a source sends data hourly set 1h regardless of AI suggestion. Use CONFIDENCE as a guide — Low means verify.
 
-**Review Tier carefully.** The AI assigns Tier based on whether a detection depends on the source. But compliance requirements, capability dependencies, and client requests can elevate a source. Cross reference with the decision tree in silent-detection-standards.md.
+**Review the function filter conditions against live data.** Always verify before deploying.
 
 ---
 
-*This document lives in 06-watchlist-management and is maintained in the sentinel-mssp-playbook repository. Update when the process changes, the prompt is refined, or new fields are added.*
+*This document lives in 06-watchlist-management and is maintained in the sentinel-mssp-playbook repository. Update when the process changes, the prompt is refined, or new field types are added.*
