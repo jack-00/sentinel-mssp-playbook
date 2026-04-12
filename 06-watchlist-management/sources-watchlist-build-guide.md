@@ -237,7 +237,7 @@ detections may depend on the same source. If three detections
 all query Azure Firewall data that is one row not three.
 
 On the very first table only output the header row:
-Table,LogSource,Category,Origin,Transport,Description,Purpose,SLA,DataConnector,DCRName,DCEName,FunctionName,SLS,MonitoringFrequency,Tier,Verified,ActionItems,Notes
+Table,LogSource,Category,Origin,Transport,Description,Purpose,SLA,DataConnector,DCRName,DCEName,FunctionName,SLS,MonitoringFrequency,Tier,Verified,ActionItems,Confidence,Notes
 
 Then one data row per unique source found. Use these approved values:
 
@@ -279,8 +279,9 @@ Tier:
 Verified: No
 ActionItems: flags for engineer — Unknown DCR / SLS needed /
   verify in environment / pending client input
+Confidence: High / Medium / Low — how confident in MonitoringFrequency
+  and Tier assignments. Briefly explain reasoning.
 Notes: misconfigurations gotchas things to verify.
-  Include MonitoringFrequency reasoning here.
 
 Special rules:
 - If detection uses search * or union * with no table filter:
@@ -361,6 +362,52 @@ Confirm you understand the two phase process. Then say:
 ---
 
 Wait for the AI to say it is ready for Phase 1 before pasting anything.
+
+---
+
+## Step 3B — Set Up Your Working Spreadsheet
+
+After Phase 1 completes the AI outputs a two-column CSV showing each table and its detections. Before moving to Phase 2 set up your working spreadsheet.
+
+**Name the spreadsheet:**
+```
+[ClientName]-sources-investigation-[YYYY-MM-DD].xlsx
+```
+
+**Open a new Excel workbook and set up two tabs:**
+
+**Tab 1 — Sources** — this is where Phase 2 CSV output goes. As the AI produces rows for each table paste them here. By the end of Phase 2 this tab has one row per source across all tables.
+
+**Tab 2 — Table Map** — paste the Phase 1 CSV output here. This is your working reference showing which detections belong to each table. You will refer to this as you work through Phase 2.
+
+**After pasting Phase 2 output into Tab 1:**
+1. Click any cell in the data
+2. Press **Ctrl+T** to format as Excel Table
+3. Click OK
+4. This makes filtering and sorting work cleanly
+
+**Upload to SharePoint immediately:**
+Upload the workbook to SharePoint before filling in anything:
+```
+02-Clients/[ClientName]/04-Watchlists/Current/
+```
+This is your baseline snapshot before investigation.
+
+**The investigation columns — Tab 1 will have these extra fields beyond the watchlist:**
+- **Tier** — assign using the silent detection tier framework in `08-silent-detections/silent-detection-standards.md`
+- **Verified** — change from No to Yes after you confirm the source against the live environment
+- **ActionItems** — update as you investigate — missing DCR names, SLS detections needed, pending client input
+- **Confidence** — AI's confidence in MonitoringFrequency and Tier — Low means you need to verify before accepting
+
+**When investigation is complete and ready for watchlist upload:**
+1. Make a copy of Tab 1
+2. Delete the four investigation columns: Tier, Verified, ActionItems, Confidence
+3. Save the copy as:
+```
+[ClientName]-sources-[YYYY-MM-DD].xlsx
+```
+4. Upload this as the `[mssname]-sources` watchlist
+5. Keep the investigation workbook in SharePoint for reference
 
 ---
 
