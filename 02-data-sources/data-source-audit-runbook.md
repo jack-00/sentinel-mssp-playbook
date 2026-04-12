@@ -359,7 +359,20 @@ Follow the complete process in:
 06-watchlist-management/sources-watchlist-build-guide.md
 ```
 
-That guide covers the AI-assisted process for building the sources watchlist table by table using the detections CSV, generating KQL sub-functions simultaneously, and uploading the completed watchlist.
+**What that guide covers — in order:**
+
+1. **Reorganize detections by table** — your detections CSV has comma separated table names per detection. Feed the entire CSV to AI to get a clean table-first view showing which detections belong to each table. This is the working map for everything that follows.
+
+2. **Run breakout queries for shared tables** — for AzureDiagnostics, CommonSecurityLog, Syslog, ThreatIntelIndicators and ASIM tables run the breakout queries from `resources/scratch.md` to see what is actually writing to each table in this environment. You need this before feeding anything to the AI.
+
+3. **Train the AI** — paste the full training prompt from the guide. This teaches the AI to think table-first not detection-first so it produces one row and one function block per unique source — not one per detection.
+
+4. **Work through tables one by one** — for each table feed the AI: the table name, all its detections with full KQL, and the breakout query results. The AI produces watchlist rows AND the KQL sub-function for that table simultaneously. Transfer both as you go — watchlist rows to the spreadsheet, functions to the functions document.
+
+5. **Review, finalize, and upload** — verify filter conditions against live data, upload the watchlist, deploy functions to Sentinel.
+
+**Why this approach:**
+Going detection by detection creates redundant rows and functions because multiple detections often share the same source. Going table-first with all detections grouped together ensures one row per unique source and one function per shared table — no redundancy, no duplication.
 
 ---
 

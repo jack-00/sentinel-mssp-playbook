@@ -32,6 +32,24 @@ The framework below provides a consistent, repeatable way to make that decision 
 
 ---
 
+## How Silent Detections Work in This Program
+
+We use two master silent detections plus optional custom detections per source. This is the variable-driven approach — the detection code never changes, only the watchlist configuration changes.
+
+**Master Source Monitor**
+One detection covers all sources. It reads every row in `[mssname]-sources` where MonitoringFrequency is not None. It calls the KQL sub-functions to get LastSeen per source. It fires per source that exceeds its own MonitoringFrequency threshold.
+
+Adding a new source to monitor means updating `[mssname]-sources`. Zero detection changes needed.
+
+**Custom SLS Detections**
+For sources needing specific logic, specific alerting behavior, or specific thresholds beyond what the master handles. The OC##### identifier is stored in the SLS field in `[mssname]-sources`. The master detection is the floor — custom SLS detections are the ceiling.
+
+**The SLS field in `[mssname]-sources`:**
+- `OC#####` — a custom silent detection exists and is assigned to this source
+- `Missing` — no custom detection yet, source is covered by the master detection only
+
+---
+
 ## The Silent Detection Tier Framework
 
 Every log source is assigned a tier that determines what level of monitoring it receives. The tier is based on answering one core question:
@@ -45,13 +63,20 @@ Every log source is assigned a tier that determines what level of monitoring it 
 Silent detection must exist, must be enabled, and must be healthy. A Tier 1 source going silent without detection is an operational failure.
 
 **Criteria — a source is Tier 1 if any of the following are true:**
-- An AB-series detection actively queries this source — losing it means a detection goes blind
+- An OC-series detection actively queries this source — losing it means a detection goes blind
 - The source feeds a capability — UEBA, Threat Intelligence, Fusion ML
 - The source is part of the incident pipeline — SecurityIncident, SecurityAlert
 - A client compliance obligation requires this data to be continuously collected
-- Loss of this source creates a meaningful gap in MITRE ATT&CK coverage that has no redundant coverage from another source
+- Loss of this source creates a meaningful gap in MITRE ATT&CK coverage with no redundant coverage
 
-**Alert behavior:** Tier 1 silent detection fires → High severity incident → Teams notification to SOC immediately
+**Alert behavior:** Tier 1 fires → High severity incident → Teams notification immediately
+
+**MonitoringFrequency guidance for Tier 1:**
+- Identity sources — 1h
+- Network and Firewall sources — 5h
+- Endpoint sources — 15h
+- Pipeline sources — 1h
+- Threat Intelligence sources — 24h
 
 **Examples:**
 - SignInLogs — password spray and impossible travel detections go blind
@@ -60,22 +85,26 @@ Silent detection must exist, must be enabled, and must be healthy. A Tier 1 sour
 - ThreatIntelIndicators — all TI matching stops
 - SecurityIncident — pipeline breaks, no tickets reach ServiceNow
 - BehaviorAnalytics — UEBA output stops updating
-- Any source with an AB-series detection mapped to it
+- Any source with an OC-series detection mapped to it
 
 ---
 
 ### Tier 2 — Recommended. Strong Justification.
 
-Silent detection should exist. A Tier 2 source going silent is important to know about but the immediate security impact is lower than Tier 1. Worth having a silent detection but the urgency when it fires is medium not critical.
+Silent detection should exist. A Tier 2 source going silent is important to know about but immediate security impact is lower than Tier 1.
 
 **Criteria — a source is Tier 2 if any of the following are true:**
-- Source has high detection value but no current AB-series detection depends on it yet
-- Source is used for threat hunting and investigation context — losing it impairs IR capability
+- Source has high detection value but no current OC-series detection depends on it yet
+- Source is used for threat hunting and investigation context
 - Source feeds compliance reporting or audit requirements
-- Source is a custom integration — Logic App, API polling — that can break silently without obvious indication
+- Source is a custom integration — Logic App, API polling — that can break silently
 - Source is expected by the client or referenced in their compliance documentation
 
-**Alert behavior:** Tier 2 silent detection fires → Medium severity incident → Teams notification to SOC within standard review window
+**Alert behavior:** Tier 2 fires → Medium severity incident → Teams notification within standard review window
+
+**MonitoringFrequency guidance for Tier 2:**
+- Most Tier 2 sources — 24h
+- Less frequent batch sources — 48h
 
 **Examples:**
 - AzureActivity — no immediate detection gap but critical for incident response
@@ -83,80 +112,61 @@ Silent detection should exist. A Tier 2 source going silent is important to know
 - Key Vault logs — high value, detections may be planned but not yet written
 - Salesforce tables — custom integrations that break without obvious indication
 - Keeper, Zoom, Drupal, SecureW2 — same reason
-- AADProvisioningLogs — compliance and audit value
 - StorageBlobLogs — investigation and exfiltration detection value
 
 ---
 
 ### Tier 3 — Health Dashboard Only. No Dedicated Silent Detection.
 
-No analytics rule needed. Health is monitored via the workbook Tab 3 and the snapshot pipeline. A source going silent here is caught by the workbook not by a firing incident.
+No analytics rule needed. Health is monitored via the workbook. Set MonitoringFrequency = None in `[mssname]-sources`.
 
 **Criteria — a source is Tier 3 if any of the following are true:**
-- Source is a capability output not a raw input — its health is covered by Tier 1 silent detections on the source tables that feed it
-- Source is an ASIM normalized table — source table coverage already exists at Tier 1
-- Source is an operational meta table — its health is monitored by platform health checks
-- Source has low security value and no detections depend on it
+- Source is a capability output — health covered by Tier 1 on the source tables that feed it
+- Source is an ASIM normalized table — source table coverage exists at Tier 1
+- Source is an operational meta table — health monitored by platform health checks
 - Source going silent is interesting to know about but does not require immediate action
-
-**Monitoring method:** Workbook Tab 3 shows health status. Snapshot comparison catches changes between audits. No incident created.
 
 **Examples:**
 - BehaviorAnalytics — UEBA source table coverage covers this
 - IdentityInfo — same
 - Anomalies — same
-- UserPeerAnalytics — same
-- ASimNetworkSessionLogs, ASimAuditEventLogs, ASimWebSessionLogs — source tables covered by Tier 1
-- Usage — operational meta table
-- Operation — operational meta table
-- Perf — low security value
-- AppMetrics, AppPerformanceCounters — low security value
-- DeviceInfo, DeviceNetworkInfo — context tables, investigation value only
-- AlertInfo, AlertEvidence — pipeline covered by SecurityIncident at Tier 1
+- ASimNetworkSessionLogs, ASimAuditEventLogs, ASimWebSessionLogs — source tables covered
+- Usage, Operation, Perf — operational meta tables
 
 ---
 
 ### Tier 4 — Document Only. No Monitoring Required.
 
-Worth documenting in the audit spreadsheet but no silent detection and no health monitoring needed. These sources being present or absent does not meaningfully affect security detection, compliance, or investigation capability.
+Worth documenting in `[mssname]-sources` but no silent detection and no health monitoring. Set MonitoringFrequency = None and SLS = Missing.
 
-**Criteria — a source is Tier 4 if all of the following are true:**
-- No AB-series detections depend on it
+**Criteria — all of the following are true:**
+- No OC-series detections depend on it
 - No compliance requirement mandates it
 - No meaningful threat hunting value
 - Going silent creates no detection gap
 
-**Examples:**
-- AppTraces — depends entirely on what application sends this and whether detections use it
-- Salesforce_LoginHistory_CL — historical reference, Salesforce_LoginEvent covers active monitoring
-- StorageQueueLogs, StorageTableLogs — low detection value unless specific detections exist
-- AzureMetrics — low security value unless specific anomaly detections are written against it
-
-**Important note:** A source can move from Tier 4 to a higher tier when a detection is written against it or when a compliance requirement is identified. Tier assignments are not permanent — they are reviewed when the detection library grows or client requirements change.
+**Important:** A source moves from Tier 4 to a higher tier when a detection is written against it or a compliance requirement is identified. Tier assignments are not permanent.
 
 ---
 
 ## The Decision Tree
 
-When assigning a tier to any log source work through these questions in order. Stop at the first YES.
+Work through these questions in order. Stop at the first YES.
 
 ```
-Q1: Does an AB-series detection actively query this source?
+Q1: Does an OC-series detection actively query this source?
     YES → Tier 1
 
 Q2: Does this source feed a capability (UEBA, Threat Intel, Fusion)?
     YES → Tier 1
 
 Q3: Is this source part of the incident pipeline?
-    (SecurityIncident, SecurityAlert, BehaviorAnalytics output)
     YES → Tier 1
 
-Q4: Does a client compliance obligation require continuous collection
-    of this source?
-    YES → Tier 1 (compliance-driven) or Tier 2 depending on urgency
+Q4: Does a client compliance obligation require continuous collection?
+    YES → Tier 1 or Tier 2 depending on urgency
 
 Q5: Is this a custom integration that could break silently?
-    (Logic App polling, REST API, custom pipeline)
     YES → Tier 2
 
 Q6: Does this source have high investigation or threat hunting value
@@ -167,7 +177,6 @@ Q7: Is this an ASIM table or capability output table?
     YES → Tier 3
 
 Q8: Is this an operational meta table?
-    (Usage, Operation, Perf, AppMetrics)
     YES → Tier 3
 
 Q9: None of the above apply
@@ -178,11 +187,24 @@ Q9: None of the above apply
 
 ## Compliance and Legal Elevation
 
-The tier framework above represents the baseline recommendation based on detection and operational need. Client-specific compliance requirements can elevate any source to Tier 1 regardless of whether a detection depends on it.
+Client-specific compliance requirements can elevate any source to Tier 1 regardless of whether a detection depends on it. HIPAA, PCI-DSS, SOC 2, GDPR — specific log sources may be legally required to be continuously monitored. A source that is Tier 3 by default becomes Tier 1 for a compliant client if required by their regulatory framework.
 
-If a client has regulatory obligations — HIPAA, PCI-DSS, SOC 2, GDPR — specific log sources may be legally required to be continuously collected and monitored. A source that is Tier 3 by default becomes Tier 1 for a compliant client if that source is required by their regulatory framework.
+Review compliance requirements alongside this tier framework during every client onboarding and license entitlement review.
 
-This is why the license-entitlement-review and the future regulatory-requirements watchlist are important. When those documents are complete for a client they should be reviewed alongside this tier framework to identify any compliance-driven elevations.
+---
+
+## Setting MonitoringFrequency and SLS in `[mssname]-sources`
+
+After assigning a tier set these two fields in the sources watchlist:
+
+| Tier | MonitoringFrequency | SLS |
+|---|---|---|
+| Tier 1 | Set per guidance above — 1h, 5h, 15h, or 24h | OC##### if custom detection exists — Missing if master covers it |
+| Tier 2 | 24h or 48h | OC##### if custom detection exists — Missing if master covers it |
+| Tier 3 | None | Missing |
+| Tier 4 | None | Missing |
+
+The master source detection automatically monitors everything with MonitoringFrequency set. You only need to create a custom SLS detection when the source needs specific logic or alerting beyond what the master provides.
 
 ---
 
@@ -192,98 +214,27 @@ Today silent detections are created and managed manually. The process is:
 
 1. Engineer identifies a log source during the data source audit
 2. Engineer assigns a tier using the decision tree above
-3. For Tier 1 and Tier 2 sources — engineer creates an AB-series silent detection in Sentinel
-4. Detection ID and name are documented in the SilentDet column of the spreadsheet
-5. Detection health is verified via SentinelHealth during Phase 3 of the audit
-
-**The problems with the manual process:**
-- No centralized catalog of which silent detections exist and what they cover
-- No consistent naming convention for silent detections
-- No automated way to verify that every Tier 1 source has a detection
-- No way to know when a new source appears that needs a detection
-- Silent detections are not version controlled or documented outside the spreadsheet
-- If an engineer leaves, the institutional knowledge of what each detection does goes with them
-
----
-
-## Future Vision — Automated Silent Detection Management
-
-The goal is a fully managed, version-controlled, automated silent detection system. Here is where we are going:
-
-### Phase 1 — Catalog and Standardize (Next)
-
-Build a silent detection catalog in the repo. One file per silent detection following a standard template. Every detection documented with:
-- Detection ID and name
-- What source it monitors
-- What table it queries
-- What field and threshold it uses
-- What tier it is
-- What alert it creates when it fires
-- Date created and last reviewed
-
-The catalog lives in `08-silent-detections/` and becomes the source of truth for all silent detections across all clients.
-
-### Phase 2 — Pre-Canned Detection Library
-
-Build a library of pre-written silent detections for all Tier 1 and Tier 2 sources we commonly see across environments. These are ready-made KQL rules that can be deployed to any new client workspace during onboarding.
-
-Common pre-canned silent detections:
-- SignInLogs silence
-- SecurityEvent silence
-- CommonSecurityLog silence per vendor
-- ThreatIntelIndicators silence and freshness check
-- Heartbeat silence per machine
-- OfficeActivity silence
-- AzureActivity silence
-- Custom integration silence — generic template for Logic App sources
-
-The library is stored in `08-silent-detections/library/` as KQL files that can be deployed via ARM template, Bicep, or the Sentinel API.
-
-### Phase 3 — Automated Coverage Verification
-
-A scheduled analytics rule or Logic App that:
-1. Queries the data source watchlist for all Tier 1 and Tier 2 sources
-2. Cross-references against the SentinelHealth table for active AB-series rules
-3. Identifies any Tier 1 or Tier 2 source that has no corresponding healthy silent detection
-4. Creates an incident and Teams notification — "Missing silent detection — [Source] — Tier [N]"
-
-This makes the gap between what should have a silent detection and what actually has one visible and actionable automatically.
-
-### Phase 4 — Snapshot-Driven New Source Detection
-
-When the DataSourceAudit_CL snapshot pipeline is running:
-1. New tables appearing between snapshots are automatically assigned Flag status
-2. An incident is created — "New log source detected — [Table] — [Source]"
-3. Engineer investigates, assigns a tier, creates a silent detection if Tier 1 or 2
-4. Watchlist is updated, Flag status resolved
-
-This closes the loop — no new source can appear without being noticed, classified, and monitored.
-
-### Phase 5 — Multi-Tenant Content Distribution
-
-Microsoft confirmed in February 2026 that multi-tenant content distribution is available from the Defender portal. Once the silent detection library is built:
-1. Maintain the canonical set of silent detections centrally
-2. Distribute updates to all client workspaces from one place
-3. New pre-canned detection added to the library — deployed to all clients automatically
-4. No more manually deploying the same rule to ten different workspaces
+3. Set MonitoringFrequency in `[mssname]-sources` — the master detection handles monitoring automatically
+4. For sources needing custom logic — create an OC-series SLD detection and store the ID in the SLS field
+5. Verify detection health via SentinelHealth during Phase 3 of the audit
 
 ---
 
 ## Silent Detection Naming Convention
 
-All silent detections follow the AB-series naming convention with a consistent structure:
+All custom silent detections follow the OC-series naming convention with a consistent structure:
 
 ```
-AB##### - SLD - [Source Description]
+OC##### - SLD - [Source Description]
 ```
 
 Examples:
-- `AB00012 - SLD - SignInLogs Silence`
-- `AB00013 - SLD - CommonSecurityLog Palo Alto Silence`
-- `AB00014 - SLD - ThreatIntelIndicators Freshness`
-- `AB00015 - SLD - Heartbeat DC01 Silence`
+- `OC00012 - SLD - SignInLogs Silence`
+- `OC00013 - SLD - CommonSecurityLog Palo Alto Silence`
+- `OC00014 - SLD - ThreatIntelIndicators Freshness`
+- `OC00015 - SLD - Heartbeat DC01 Silence`
 
-The `SLD` tag in the name makes silent detections immediately identifiable in the analytics rules list and in SentinelHealth queries:
+The `SLD` tag makes silent detections immediately identifiable in SentinelHealth queries:
 
 ```kql
 // Find all silent detections
@@ -294,21 +245,24 @@ SentinelHealth
     by SentinelResourceName
 ```
 
+In `[mssname]-detections` silent detections have AlertClass = Operational.
+
 ---
 
-## Silent Detection Template
+## Custom Silent Detection Template
 
-Every silent detection follows this structure:
+When a source needs a custom SLD beyond what the master covers use this template:
 
 ```kql
 // ============================================================
-// AB##### - SLD - [Source Description]
+// OC##### - SLD - [Source Description]
 // Tier: [1/2]
-// Source: [Table name]
-// Purpose: Fires if [source] stops sending data for [threshold]
+// Source: [Table name] — [LogSource]
+// Purpose: Fires if [source] stops sending data beyond threshold
+// MonitoringFrequency in [mssname]-sources: [value]
 // Created: [Date]
 // ============================================================
-let threshold = [time period]; // e.g. 4h for Tier 1, 24h for Tier 2
+let threshold = [time period]; // matches MonitoringFrequency in watchlist
 let hasData = [TABLE_NAME]
 | where TimeGenerated > ago(threshold)
 | summarize Count = count()
@@ -317,29 +271,38 @@ hasData
 | where HasData == false
 | project
     TimeGenerated = now(),
-    AlertName = "AB##### - SLD - [Source Description]",
+    AlertName = "OC##### - SLD - [Source Description]",
     Description = "[Source] has not sent data in the last [threshold]. [Detection impact statement.]",
     Severity = "[High/Medium]",
     Tier = "[1/2]"
 ```
 
-**Threshold guidelines by tier:**
-- Tier 1 Identity sources — 4 hours
-- Tier 1 Endpoint sources — 12 hours
-- Tier 1 Network and Firewall sources — 6 hours
-- Tier 1 Pipeline sources (SecurityIncident) — 1 hour
-- Tier 2 sources — 24 hours
+---
+
+## Future Vision — Automated Silent Detection Management
+
+### Phase 1 — Catalog and Standardize (Next)
+Build a silent detection catalog in the repo. One file per custom SLD detection. Every detection documented with ID, name, what source it monitors, tier, threshold, and alert behavior.
+
+### Phase 2 — Pre-Canned Detection Library
+Build a library of pre-written custom SLD detections for common Tier 1 and Tier 2 sources. Stored in `08-silent-detections/library/` as KQL files deployable via Sentinel API.
+
+### Phase 3 — Automated Coverage Verification
+A scheduled analytics rule that reads `[mssname]-sources` for all sources where SLS = Missing and MonitoringFrequency is set, cross-references against SentinelHealth, and flags any gaps.
+
+### Phase 4 — Multi-Tenant Content Distribution
+Maintain canonical SLD detections centrally. Distribute updates to all client workspaces from one place via the Defender portal multi-tenant content distribution capability.
 
 ---
 
 ## Review and Maintenance
 
 Silent detections are reviewed:
-- During every data source audit — verify all Tier 1 and Tier 2 sources have a healthy detection
-- When a new AB-series detection is written — check if the source tables it depends on have Tier 1 silent detections
-- When a client changes their data sources — new sources get tiered and monitored, decommissioned sources get marked Decom
-- Quarterly — review all Tier 2 and Tier 3 assignments to see if anything should be elevated based on new detections written
+- During every data source audit — verify MonitoringFrequency and SLS fields are correct for all sources
+- When a new OC-series detection is written — check if source tables need Tier 1 coverage
+- When a client changes their data sources — new sources get tiered, decommissioned sources updated
+- Quarterly — review all Tier 2 and Tier 3 assignments to see if anything should be elevated
 
 ---
 
-*This document is maintained in sentinel-mssp-playbook under 08-silent-detections. It governs the silent detection methodology across all managed environments. Update it when the tier framework evolves, when new source types are identified, or when the automation phases are completed.*
+*This document is maintained in sentinel-mssp-playbook under 08-silent-detections. Update it when the tier framework evolves, when new source types are identified, or when the automation phases are completed.*
