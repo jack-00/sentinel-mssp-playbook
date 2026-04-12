@@ -294,8 +294,30 @@ IMPORTANT RULES
 7. If uncertain about any field say so in NOTES rather than
    guessing silently.
 
-Confirm you understand both output types and all rules before
-I provide any data.
+═══════════════════════════════════════
+CSV OUTPUT
+═══════════════════════════════════════
+
+After all watchlist rows and functions for a table produce a CSV
+block with this exact header row followed by one data row per
+source identified:
+
+Table,LogSource,Category,Origin,Transport,Description,Purpose,SLA,DataConnector,DCRName,DCEName,FunctionName,SLS,MonitoringFrequency,Notes,Tier,Verified,ActionItems
+
+Rules for CSV output:
+- Tier: assign 1 / 2 / 3 / 4 based on whether detections depend
+  on this source (1), high investigation value (2), capability
+  output or ASIM (3), or no dependencies (4)
+- Verified: always write No — engineer confirms against live environment
+- ActionItems: note anything that needs follow up — missing DCR,
+  SLS detection needed, pending client input, verify in environment
+- Wrap any field containing commas in double quotes
+- DCRName and DCEName: write Unknown
+- SLS: write Missing
+- Output the CSV block clearly labeled so it is easy to copy
+
+Confirm you understand all output types and rules before I provide
+any data.
 ```
 
 ---
