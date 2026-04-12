@@ -161,33 +161,48 @@ Before you can work table by table you need a clear view of which detections bel
 
 **How to do it — feed the entire detections CSV to AI:**
 
-Copy your entire detections CSV content and paste it to the AI with this prompt:
+Copy your entire detections CSV content and paste it to the AI with this prompt. This produces a CSV you paste directly into a new spreadsheet which becomes your working investigation reference for the rest of this process.
 
 ```
-I have a detection catalog with these columns:
+I have a detection catalog CSV with these columns:
 RuleId, AnalyticRule, Table, Watchlist, AlertClass, Description
 
 The Table field contains comma separated table names — one detection
 may query multiple tables.
 
-Please reorganize this into a table-first view where I can see
-each table and which detections depend on it.
+Please reorganize this data so I have one row per table per detection.
+If a detection queries three tables it appears three times — once
+under each table.
 
-Output as a simple two column list:
+Then group by table and list all detections that share that table
+together so I can see at a glance which detections depend on each table.
 
-Table | Detections
-AzureDiagnostics | OC00034 - Detection Name, OC00041 - Detection Name
-SignInLogs | OC00012 - Detection Name, OC00019 - Detection Name
-CommonSecurityLog | OC00055 - Detection Name
+Output as CSV with these exact column headers:
+
+Table,Detections
 
 Rules:
-- If a detection queries multiple tables list it under each table
-- Group all detections for the same table on one row comma separated
+- One row per unique table
+- List all detections for that table in the Detections column
+  comma separated — include RuleId and rule name for each
 - Sort tables alphabetically
-- Include the RuleId and rule name for each detection
+- If a detection queries multiple tables it appears under each one
+- Output only the CSV — no explanation, no markdown, no headers
+  other than the column headers above
 ```
 
-The AI returns a clean table-first reference. Save this — it is your working map for the rest of this process. You will go through it table by table.
+**What to do with the output:**
+1. Copy the CSV output from the AI
+2. Open a new Excel workbook
+3. Paste into Sheet 1
+4. Format as Excel Table with Ctrl+T
+5. Save as:
+```
+[ClientName]-sources-investigation-[YYYY-MM-DD].xlsx
+```
+6. Upload to SharePoint at `02-Clients/[ClientName]/04-Watchlists/Current/`
+
+This is your working map for the rest of this process. You will go through it table by table using this as your guide. Keep it open alongside your sources spreadsheet as you work.
 
 ---
 
