@@ -52,7 +52,7 @@ MonitoringFrequency
 Notes
 ```
 - SLA = True/False — service level agreement commitment
-- SLS = AB##### or Missing — the silent detection assigned to this source
+- SLS = OC##### or Missing — the silent detection assigned to this source
 - FunctionName null means no sub-function needed
 - Vetted removed — if it is in sources it is already vetted by definition
 - DateAdded removed — tracked in SharePoint instead
@@ -145,7 +145,7 @@ Adding a new source to monitor = add a row to [mssname]-sources with MonitoringF
 
 **Custom SLS Detections**
 - For sources needing specific logic beyond the master
-- AB##### stored in the SLS field in [mssname]-sources
+- OC##### stored in the SLS field in [mssname]-sources
 - Master is the floor — custom SLS detections are the ceiling
 
 Note: A separate master table detection is not needed. Every table has at least one row in sources so the master source detection covers all tables automatically.
@@ -448,6 +448,49 @@ Every Logic App needs its own silent detection. Only introduce when value justif
 **Scalable** — adding more clients, tables, or detections requires adding to the system not rebuilding it.
 
 **Automate where the value justifies the overhead.** Not everything should be automated.
+
+---
+
+## Sources Investigation Spreadsheet — Two Spreadsheet Design
+
+The sources build process uses two separate spreadsheets that serve different purposes.
+
+**`[mssname]-detections` spreadsheet — detection ledger:**
+- One row per detection
+- RuleId, AnalyticRule, Table, Watchlist, AlertClass, Description
+- Starting point for the sources build process — fed to AI to reorganize by table
+- Becomes the [mssname]-detections watchlist
+- Owned by detection team — do not modify structure
+
+**Sources investigation spreadsheet — working reference:**
+- One row per log source
+- Built by AI from the detections spreadsheet
+- Contains all fifteen [mssname]-sources fields PLUS four investigation fields:
+  - Tier — 1 / 2 / 3 / 4 — assign using silent detection tier framework
+  - Status — Active / Inactive / Review / No Data — from live environment
+  - Verified — Yes / No — confirmed against live environment
+  - ActionItems — anything that needs to be done before upload
+- Named: `[ClientName]-sources-investigation-[YYYY-MM-DD].xlsx`
+- When complete remove the four investigation columns and save as:
+  `[ClientName]-sources-[YYYY-MM-DD].xlsx` for watchlist upload
+
+**The flow:**
+```
+[mssname]-detections → feed to AI → reorganize by table
+        ↓
+AI produces CSV with 15 sources fields + 4 investigation fields
+        ↓
+Paste into sources investigation spreadsheet
+        ↓
+Verify against live environment — fill in Tier, Status, Verified, ActionItems
+        ↓
+Remove investigation columns
+        ↓
+[mssname]-sources watchlist upload
+```
+
+**Important — LogSource specificity:**
+When reviewing AI output verify that LogSource values are specific enough to match what live breakout queries show. If the AI produces a generic value like Azure Diagnostics Logs rather than Azure Firewall — Application Rule that row needs manual correction before upload. The LogSource value in the watchlist and in the KQL function must match exactly — this is the join key.
 
 ---
 
