@@ -71,6 +71,45 @@ Step 11 — Upload watchlist and deploy functions
 
 ---
 
+## The Two Spreadsheets and How They Relate
+
+Before starting understand the relationship between the two spreadsheets you will be working with.
+
+**`[mssname]-detections` spreadsheet — already built:**
+One row per detection. RuleId, AnalyticRule, Table, Watchlist, AlertClass, Description. This is your starting point and your input for this process. It also becomes the detections watchlist uploaded to Sentinel separately.
+
+**Sources investigation spreadsheet — what this process produces:**
+One row per log source. Built by the AI using the detections spreadsheet as input. This is your working reference during investigation and becomes the `[mssname]-sources` watchlist when complete.
+
+**The relationship:**
+```
+[mssname]-detections spreadsheet
+        ↓ feed to AI — reorganize by table
+Sources investigation spreadsheet  ← working reference
+        ↓ remove investigation columns
+[mssname]-sources watchlist upload
+        ↓ GetEnrichedInventory() joins both
+Workbook shows detection coverage per source
+```
+
+---
+
+## Spreadsheet Naming
+
+**Working investigation spreadsheet — used during this process:**
+```
+[ClientName]-sources-investigation-[YYYY-MM-DD].xlsx
+```
+Save to: `02-Clients/[ClientName]/04-Watchlists/Current/`
+
+**Final upload spreadsheet — created when investigation is complete:**
+```
+[ClientName]-sources-[YYYY-MM-DD].xlsx
+```
+Remove the four investigation columns before saving this version. Upload this one as the watchlist.
+
+---
+
 ## Standards and Taxonomy
 
 Before starting know the approved values for every field. The AI uses these — knowing them helps you verify its output.
@@ -94,13 +133,19 @@ Microsoft Connector / XDR Connector / AMA — DCR / AMA — DCR — DCE / CEF �
 
 ## Prerequisites — Have These Ready
 
-1. **Detections CSV** — your `[mssname]-detections` spreadsheet with RuleId, AnalyticRule, Table, Watchlist, AlertClass, Description
-2. **Sources spreadsheet** — open with correct column headers in this exact order:
+1. **Detections spreadsheet** — your `[mssname]-detections` spreadsheet with RuleId, AnalyticRule, Table, Watchlist, AlertClass, Description
+2. **Sources investigation spreadsheet** — open with these column headers in this exact order:
 ```
 Table, LogSource, Category, Origin, Transport, Description,
 Purpose, SLA, DataConnector, DCRName, DCEName, FunctionName,
-SLS, MonitoringFrequency, Notes
+SLS, MonitoringFrequency, Notes, Tier, Status, Verified, ActionItems
 ```
+The first fifteen columns match `[mssname]-sources` exactly and become the watchlist upload. The last four are investigation working fields removed before upload:
+- **Tier** — 1 / 2 / 3 / 4 — silent detection tier per silent-detection-standards.md
+- **Status** — what the live environment shows — Active / Inactive / Review / No Data
+- **Verified** — Yes / No — confirmed against live environment
+- **ActionItems** — missing DCR, SLS detection needed, pending client input etc
+
 3. **Functions document** — a new file called `functions-in-progress.kql` in the client's `06-Functions` folder in SharePoint
 4. **Text editor** — staging area for input before sending to AI
 5. **A capable LLM** — use your internal company LLM for anything involving client-specific information
@@ -171,6 +216,11 @@ Paste this entire prompt into the AI at the start of every session. The prompt r
 **TRAINING PROMPT — paste this first, nothing else:**
 
 ```
+CRITICAL OUTPUT RULE: You will only output raw CSV rows and KQL code blocks.
+No prose. No bullet points. No markdown formatting. No explanations before
+or after outputs. If you feel the urge to explain something put it inside
+the Notes CSV field instead. Raw CSV and code only.
+
 I am helping build a data source tracking system for Microsoft Sentinel.
 This is a two phase process. I will guide you through each phase.
 
@@ -594,7 +644,7 @@ Before uploading check every row:
 
 ---
 
-## Step 10 — Review and Finalize Functions
+## Step 11 — Review and Finalize Functions
 
 Before deploying functions to Sentinel review each one:
 
@@ -617,7 +667,20 @@ Add any combinations found here that are not already in the function.
 
 ---
 
-## Step 11 — Upload Watchlist and Deploy Functions
+## Step 12 — Prepare Final Upload Spreadsheet and Upload
+
+**Remove investigation columns before uploading:**
+1. Make a copy of the investigation spreadsheet
+2. Name the copy: `[ClientName]-sources-[YYYY-MM-DD].xlsx`
+3. Delete these four columns: Tier, Status, Verified, ActionItems
+4. The remaining fifteen columns match `[mssname]-sources` exactly
+5. Save to `02-Clients/[ClientName]/04-Watchlists/Current/`
+
+**Upload the fifteen-column version as the watchlist — not the investigation spreadsheet.**
+
+---
+
+## Step 13 — Upload Watchlist and Deploy Functions
 
 **Watchlist upload:**
 1. Export spreadsheet as CSV
