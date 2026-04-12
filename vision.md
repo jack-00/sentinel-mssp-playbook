@@ -32,6 +32,43 @@ This creates real problems:
 
 ---
 
+## The Problems We Are Solving
+
+Before this program existed managing ten client Sentinel environments meant ten different ways of doing everything. No standard. No system. No confidence.
+
+These were the real problems:
+
+**The silent failure problem.**
+A log source stops sending data. No alert fires. No one notices. A detection that depended on that source has been blind for two weeks. A client asks why a threat was not caught. There is no good answer. This happens because there was no system monitoring whether the right data was flowing in the first place.
+
+**The detection dependency problem.**
+A detection fires. An engineer investigates. They find the data source the detection depends on went inactive three days ago. The alert is a false positive produced by stale data — not a real threat. Or worse — the detection stopped firing entirely and no one knew. Without knowing which detections depend on which sources there is no way to understand the blast radius when something breaks.
+
+**The content management problem.**
+Custom detections get built and deployed. Over time nobody has a complete picture of what exists, what tables each detection queries, what watchlists it references, or whether the data it depends on is still flowing. The institutional knowledge lives in individual engineers' heads. When someone leaves it goes with them.
+
+**The audit preparation problem.**
+A client review is tomorrow. An engineer spends four hours pulling together status information, checking connector health, verifying detection counts, and building slides. None of this is real-time. By the time it is presented some of it is already stale. The process is manual, inconsistent, and does not scale.
+
+**The onboarding problem.**
+A new client signs. Onboarding requires custom work — different connectors, different data sources, different detection needs. There is no standard starting point. Every onboarding reinvents the wheel. It takes weeks and the result is inconsistent.
+
+---
+
+## How This Program Solves Them
+
+**The silent failure problem** is solved by the sources watchlist and the master silent detection. Every tracked source has a MonitoringFrequency value. One detection reads every source's threshold from the watchlist and fires if any source exceeds it. Adding a new source to monitor means updating the watchlist — zero code changes. The detection adapts automatically. Silent failures become visible before clients notice.
+
+**The detection dependency problem** is solved by the DetectionCatalog watchlist and the GetEnrichedInventory function. Every detection documents which tables it queries. The function joins detections against sources. The workbook shows exactly which detections depend on which sources and flags any detection whose source is inactive — blind detections become visible automatically.
+
+**The content management problem** is solved by the detections watchlist. Every custom OC-series detection has a row — what it does, what tables it queries, what watchlists it references, whether it is a security detection or operational health detection. The detection team owns it. The platform team reads from it. A single source of truth that any engineer can query at any time.
+
+**The audit preparation problem** is solved by the workbook and the function layer. GetEnrichedInventory() joins all five watchlists against live workspace data in one call. The workbook opens and everything is current. No preparation. No manual data gathering. The audit deck generates itself.
+
+**The onboarding problem** is solved by the intake spreadsheet. The same spreadsheet format used for ongoing operations becomes the client intake form. A new client fills in what they know. The team completes the technical fields. Upload five watchlists. The workbook lights up. Detections read MonitoringFrequency from the watchlist and start monitoring immediately. Onboarding is complete when the workbook shows green — not when someone ticks a box.
+
+---
+
 ## The Moment Everything Clicks
 
 Imagine this scenario.

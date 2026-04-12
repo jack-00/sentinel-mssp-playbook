@@ -452,3 +452,51 @@ Every Logic App needs its own silent detection. Only introduce when value justif
 ---
 
 *Add new notes here as they come up during development. Reference this file before writing any KQL function, workbook query, or automation logic.*
+
+---
+
+## Sources Investigation Spreadsheet — Two Spreadsheet Design
+
+The sources build process uses two separate spreadsheets that serve different purposes.
+
+**`[mssname]-detections` spreadsheet — detection ledger:**
+- One row per detection
+- RuleId, AnalyticRule, Table, Watchlist, AlertClass, Description
+- Starting point for the sources build process — fed to AI to reorganize by table
+- Becomes the [mssname]-detections watchlist
+- Owned by detection team
+- Keep as-is — do not modify structure
+
+**Sources investigation spreadsheet — working reference:**
+- One row per log source
+- Built by AI from the detections spreadsheet
+- Contains all fifteen [mssname]-sources fields PLUS four investigation fields:
+  - Tier — 1 / 2 / 3 / 4
+  - Status — Active / Inactive / Review / No Data — from live environment
+  - Verified — Yes / No — confirmed against live environment
+  - ActionItems — anything that needs to be done
+- Named: `[ClientName]-sources-investigation-[YYYY-MM-DD].xlsx`
+- When complete remove investigation columns and save as:
+  `[ClientName]-sources-[YYYY-MM-DD].xlsx` for watchlist upload
+
+**The relationship:**
+```
+[mssname]-detections → feed to AI → sources investigation spreadsheet
+                                           ↓ remove investigation columns
+                                    [mssname]-sources watchlist
+```
+
+---
+
+## AI Prompt — DetectionCatalog Has No RuleId in Reorganization Step
+
+When feeding the detections CSV to AI in Step 1 of the sources build process to reorganize by table — the output is a table-first reference used for working purposes only. It does not need RuleId because it is not being uploaded anywhere at this stage.
+
+However when the AI produces the full watchlist row output in Step 4 it works from detection KQL — there is no RuleId in the KQL itself. The AI identifies sources from filter conditions not from rule IDs.
+
+**The gap to consider before finalizing the prompt:**
+The current training prompt does not explicitly tell the AI what to do when a detection has no clear table filter — for example workspace-wide detections using search *. The prompt handles this with the All value but does not address how to handle cases where the AI cannot confidently identify the sub-source from the KQL alone.
+
+**Recommendation:** When reviewing AI output for each table verify that LogSource values are specific enough to match what the live breakout queries show. If the AI produces a generic LogSource like Azure Diagnostics Logs rather than Azure Firewall — Application Rule that row needs manual correction before the watchlist is uploaded.
+
+This will be reviewed and the prompt refined during the end-of-process review session.
