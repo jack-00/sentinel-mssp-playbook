@@ -89,11 +89,9 @@ You now have your working investigation map. Every table is listed. Detections a
 
 Before working through any tables create the empty sources spreadsheet with the correct column headers. You will paste AI output into this as you go through each table.
 
-**Column headers in this exact order:**
+**Column headers — copy this exact line into a blank text file and save as CSV:**
 ```
-Table, LogSource, Category, Origin, Transport, Description,
-Purpose, SLA, DataConnector, DCRName, DCEName, FunctionName,
-SLS, MonitoringFrequency, Notes
+Table,LogSource,Category,Origin,Transport,Description,Purpose,SLA,DataConnector,DCRName,DCEName,FunctionName,SLS,MonitoringFrequency,Notes
 ```
 
 Save as:
