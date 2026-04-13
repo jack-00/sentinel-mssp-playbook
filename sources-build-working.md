@@ -122,13 +122,7 @@ For each table in your investigation map create an individual text file. This is
 
 ```
 TABLE: [TableName]
-DATE: [YYYY-MM-DD]
-CLIENT: [ClientName]
-
 FUNCTION NAME: Get[TableName]Health()
-
-NUMBER OF SOURCES: [fill in after AI analysis]
-SOURCE NAMES: [fill in after AI analysis — one per line]
 
 --- DISCOVERY ---
 
@@ -145,17 +139,12 @@ DETECTIONS:
 [paste full KQL]
 [repeat for each detection]
 
---- AI ANALYSIS OUTPUT ---
+--- AI OUTPUT ---
 
-TABLE SUMMARY:
-[paste AI boilerplate here after analysis]
-
-SOURCES ROWS:
-[paste AI sources row output here]
-
---- NOTES ---
-[anything worth documenting about this table]
+[paste AI summary and sources rows here after analysis]
 ```
+
+The text file has two jobs — give AI everything it needs at the top, and capture what AI gives you back at the bottom. All the detailed field values go directly into the sources spreadsheet. Nothing else needed here.
 
 ---
 
@@ -290,11 +279,12 @@ Here is the investigation file:
 
 After AI responds:
 
-1. Copy the TABLE SUMMARY section into the text file under `--- AI ANALYSIS OUTPUT ---`
-2. Note the number of sources and source names at the top of the text file
-3. Copy the SOURCES WATCHLIST ROWS and paste into your sources spreadsheet
-4. Fill in DCRName and DCEName from what you know about this environment
-5. Mark Verified = No until you have confirmed the source is actually present and active
+1. Copy the entire AI response and paste it into the text file under `--- AI OUTPUT ---`
+2. Copy the sources rows from Section 2 and paste them into your sources spreadsheet
+3. Fill in DCRName and DCEName from what you know about this environment
+4. Note any SentinelCapabilities the AI identified — you will use these later to add CAP-series rows to the detections watchlist
+
+The text file is now your complete record for this table. The sources spreadsheet has the row ready for upload. Move on to the next table.
 
 Repeat Steps 3 through 6 for every table in your investigation map.
 
