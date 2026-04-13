@@ -265,6 +265,23 @@ Table, LogSource, Category, Origin, Transport, Description,
 Purpose, SLA, DataConnector, DCRName, DCEName, FunctionName,
 SLS, MonitoringFrequency, SentinelCapabilities, Notes
 
+SECTION 3 — FUNCTION FILTER CONDITIONS
+For each source identified list the exact KQL filter conditions needed
+to isolate that source within the table. This will be used later to
+write the KQL sub-function for this table.
+
+Format:
+Source: [LogSource name]
+Filter: [exact KQL where clause]
+
+Example:
+Source: Azure Firewall — Threat Intel Log
+Filter: ResourceType == "AZUREFIREWALLS" and Category == "AzureFirewallThreatIntelLog"
+
+If this is a single source table with no filtering needed write:
+Source: [LogSource name]
+Filter: None — single source table, no filter conditions needed
+
 Rules for filling in fields:
 - SLA: True if this is a primary security source — False if supporting
 - DataConnector: best guess based on table and origin
