@@ -259,7 +259,7 @@ For each source tell me:
   UEBA, Threat Intelligence, Fusion ML, or None
 - Whether any of the provided detections depend on this source
 
-SECTION 2 — FUNCTION FILTER CONDITIONS
+FUNCTION FILTER CONDITIONS
 For each source identified list the exact KQL filter conditions needed
 to isolate that source within the table. This will be used later to
 write the KQL sub-function for this table.
@@ -276,7 +276,7 @@ If this is a single source table with no filtering needed write:
 Source: [LogSource name]
 Filter: None — single source table, no filter conditions needed
 
-SECTION 3 — SOURCES WATCHLIST ROWS
+SOURCES WATCHLIST ROWS
 One row per data source identified. Use these exact column headers:
 Table, LogSource, Category, Origin, Transport, Description,
 Purpose, SLA, DataConnector, DCRName, DCEName, FunctionName,
