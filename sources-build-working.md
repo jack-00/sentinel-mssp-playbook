@@ -215,7 +215,35 @@ I will give you a table investigation file. It contains schema information,
 source breakdown results, and a list of consumers that rely on this table.
 Consumers may include custom detections, scheduled reports, workbook queries,
 Sentinel capabilities, or client compliance requirements — each with their
-KQL or description included. Analyze everything and give me:
+KQL or description included.
+
+Important rules about the template:
+- If SOURCE BREAKDOWN still contains the default placeholder text it means
+  no breakout data was provided. Work from the schema only.
+- If CONSUMERS still contains the default placeholder text it means no
+  consumer data was provided. Work from the schema and table name only.
+- Even when no breakout or consumer data is provided always give me the
+  full analysis — do not skip or abbreviate any section.
+
+Multi-source detection rule:
+- Always inspect the schema for fields that indicate multiple sources may
+  write to this table. Key fields to watch for: ResourceType, Category,
+  DeviceVendor, DeviceProduct, HostName, SourceSystem, EventVendor,
+  EventProduct, Computer, TenantId, WorkspaceId, or any field ending in
+  Vendor, Provider, Source, or Type.
+- If you find any of these fields and no breakout data was provided always
+  flag it clearly like this:
+
+  ⚠️ POSSIBLE MULTI-SOURCE TABLE
+  Field [FieldName] detected — multiple distinct sources may write here.
+  No breakout data was provided to confirm.
+  Recommend running this query before finalizing sources rows:
+  TableName | summarize count() by [FieldName] | order by count_ desc
+
+- Always include this flag in SECTION 1 so the engineer knows to
+  investigate before treating this as a single source table.
+
+Analyze everything and give me:
 
 SECTION 1 — TABLE SUMMARY
 2-3 sentences on what this table is and what data lands here.
