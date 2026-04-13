@@ -134,17 +134,14 @@ SOURCE BREAKDOWN:
 [example: ResourceType = AZUREFIREWALLS, ResourceType = VAULTS]
 [for single source tables — write: Single source]
 
-DETECTIONS:
-[Detection name — RuleId]
-[paste full KQL]
-[repeat for each detection]
-
---- AI OUTPUT ---
-
-[paste AI summary and sources rows here after analysis]
+CONSUMERS:
+[Name and RuleId of anything that relies on this table]
+[This includes detections, reports, workbook queries, capabilities, or client requirements]
+[For each one paste the full KQL or description below the name]
+[repeat for each consumer]
 ```
 
-The text file has two jobs — give AI everything it needs at the top, and capture what AI gives you back at the bottom. All the detailed field values go directly into the sources spreadsheet. Nothing else needed here.
+The text file gives AI everything it needs. When AI responds paste its output directly above this template at the top of the file. All detailed field values go into the sources spreadsheet — nothing else needed here.
 
 ---
 
@@ -214,7 +211,11 @@ Once the text file is populated with schema and breakout results feed it to AI w
 
 ```
 I am documenting data sources for a Microsoft Sentinel environment.
-I will give you a table investigation file. Analyze it and give me:
+I will give you a table investigation file. It contains schema information,
+source breakdown results, and a list of consumers that rely on this table.
+Consumers may include custom detections, scheduled reports, workbook queries,
+Sentinel capabilities, or client compliance requirements — each with their
+KQL or description included. Analyze everything and give me:
 
 SECTION 1 — TABLE SUMMARY
 2-3 sentences on what this table is and what data lands here.
