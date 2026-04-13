@@ -91,8 +91,11 @@ Before working through any tables create the empty sources spreadsheet with the 
 
 **Column headers — copy this exact line into a blank text file and save as CSV:**
 ```
-Table,LogSource,Category,Origin,Transport,Description,Purpose,SLA,DataConnector,DCRName,DCEName,FunctionName,SLS,MonitoringFrequency,Notes
+Table,LogSource,Category,Origin,Transport,Description,Purpose,SLA,DataConnector,DCRName,DCEName,FunctionName,SLS,MonitoringFrequency,SentinelCapabilities,Notes
 ```
+
+**Note on SentinelCapabilities:**
+This field captures which Sentinel capabilities depend on this source — UEBA, Fusion ML, Threat Intelligence, SOC Optimization, or None. You will not know this upfront for every source. The AI analysis in Step 5 will tell you. Fill it in as you discover it. At the end of the sources build process use what you have learned here to go back and add CAP-series rows to the detections watchlist for any capabilities identified.
 
 Save as:
 ```
@@ -242,7 +245,7 @@ SECTION 2 — SOURCES WATCHLIST ROWS
 One row per data source identified. Use these exact column headers:
 Table, LogSource, Category, Origin, Transport, Description,
 Purpose, SLA, DataConnector, DCRName, DCEName, FunctionName,
-SLS, MonitoringFrequency, Notes
+SLS, MonitoringFrequency, SentinelCapabilities, Notes
 
 Rules for filling in fields:
 - SLA: True if this is a primary security source — False if supporting
@@ -258,6 +261,12 @@ Rules for filling in fields:
   24h for daily batch sources
   48h for less frequent
   None if monitoring not appropriate
+- SentinelCapabilities: list any Sentinel capabilities that depend
+  on this source — UEBA, Fusion ML, Threat Intelligence, SOC Optimization.
+  Write None if no capabilities depend on it.
+  This is important — the engineer will use this to update the
+  detections watchlist with CAP-series rows after the sources build
+  is complete.
 - Notes: include your confidence level on MonitoringFrequency
   and anything the engineer should verify
 
