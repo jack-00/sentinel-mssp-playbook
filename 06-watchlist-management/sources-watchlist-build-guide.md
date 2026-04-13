@@ -129,22 +129,19 @@ Microsoft Connector / XDR Connector / AMA — DCR / AMA — DCR — DCE / CEF �
 
 **SLS:** AB##### or Missing
 
+**SentinelCapabilities:** UEBA / Fusion ML / Threat Intelligence / SOC Optimization / None — discovered during the build process, not known upfront
+
 ---
 
 ## Prerequisites — Have These Ready
 
 1. **Detections spreadsheet** — your `[mssname]-detections` spreadsheet with RuleId, AnalyticRule, Table, Watchlist, AlertClass, Description
-2. **Sources investigation spreadsheet** — open with these column headers in this exact order:
+2. **Sources investigation spreadsheet** — open with this exact single line as your header. Copy it into a blank text file, save as CSV, then open in Excel:
 ```
-Table, LogSource, Category, Origin, Transport, Description,
-Purpose, SLA, DataConnector, DCRName, DCEName, FunctionName,
-SLS, MonitoringFrequency, Notes, Tier, Status, Verified, ActionItems
+Table,LogSource,Category,Origin,Transport,Description,Purpose,SLA,DataConnector,DCRName,DCEName,FunctionName,SLS,MonitoringFrequency,SentinelCapabilities,Notes,Verified
 ```
-The first fifteen columns match `[mssname]-sources` exactly and become the watchlist upload. The last four are investigation working fields removed before upload:
-- **Tier** — 1 / 2 / 3 / 4 — silent detection tier per silent-detection-standards.md
-- **Status** — what the live environment shows — Active / Inactive / Review / No Data
+The first sixteen columns match `[mssname]-sources` exactly and become the watchlist upload. Verified is the only investigation working field — remove it before upload.
 - **Verified** — Yes / No — confirmed against live environment
-- **ActionItems** — missing DCR, SLS detection needed, pending client input etc
 
 3. **Functions document** — a new file called `functions-in-progress.kql` in the client's `06-Functions` folder in SharePoint
 4. **Text editor** — staging area for input before sending to AI

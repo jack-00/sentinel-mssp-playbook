@@ -49,11 +49,13 @@ DCEName
 FunctionName
 SLS
 MonitoringFrequency
+SentinelCapabilities
 Notes
 ```
 - SLA = True/False — service level agreement commitment
 - SLS = OC##### or Missing — the silent detection assigned to this source
 - FunctionName null means no sub-function needed
+- SentinelCapabilities — discovered during sources build process, not known upfront. Use to add CAP-series rows to detections watchlist after sources build is complete. Values: UEBA / Fusion ML / Threat Intelligence / SOC Optimization / None
 - Vetted removed — if it is in sources it is already vetted by definition
 - DateAdded removed — tracked in SharePoint instead
 - Status, LastSeen, DaysSinceLastLog — calculated live by functions, never stored

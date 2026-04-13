@@ -167,6 +167,7 @@ DCEName             — Data Collection Endpoint name if applicable
 FunctionName        — KQL sub-function name — null means none needed
 SLS                 — AB##### or Missing — silent detection for this source
 MonitoringFrequency — None / 1h / 5h / 15h / 24h / 48h
+SentinelCapabilities — capabilities that depend on this source — UEBA / Fusion ML / Threat Intelligence / None
 Notes               — technical notes, gotchas, environment context
 ```
 

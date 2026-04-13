@@ -369,6 +369,7 @@ Five watchlists power the entire program. Every piece of data we need lives in o
 | FunctionName | KQL sub-function name — null means no function needed |
 | SLS | AB##### or Missing — custom silent detection for this source if one exists |
 | MonitoringFrequency | None / 1h / 5h / 15h / 24h / 48h — read by master source detection as variable |
+| SentinelCapabilities | Sentinel capabilities that depend on this source — UEBA / Fusion ML / Threat Intelligence / SOC Optimization / None |
 | Notes | Technical notes, gotchas, environment specific context |
 
 ---
