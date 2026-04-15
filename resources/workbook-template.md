@@ -67,17 +67,16 @@ This view shows every data pipeline flowing into the Sentinel environment. Each 
 ```kql
 let known = _GetWatchlist('[mssname]-tables')
 | project Table, Category, Details, Vetted, Notes;
-let live = search *
+let live = union withsource=Table *
 | where TimeGenerated > ago(30d)
-| summarize LastSeen = max(TimeGenerated) by $table
+| summarize LastSeen = max(TimeGenerated) by Table
 | extend DaysSince = datetime_diff('day', now(), LastSeen)
 | extend Status = case(
     DaysSince <= 1, "Active",
     DaysSince <= 7, "Review",
     DaysSince > 7,  "Inactive",
     "No Data"
-)
-| project Table = $table, Status, LastSeen, DaysSince;
+);
 live
 | join kind=fullouter known on Table
 | extend Status = iff(isempty(Status), "Unknown", Status)
