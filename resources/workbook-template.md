@@ -64,7 +64,6 @@ This view shows every data pipeline flowing into the Sentinel environment. Each 
 ```
 
 ### Query
-```kql
 let known = _GetWatchlist('[mssname]-tables')
 | project Table, Category, Details, Vetted, Notes;
 let live = union withsource=TableName *
@@ -84,7 +83,8 @@ live
 | extend Category = iff(isempty(Category), "Unknown — not in watchlist", Category)
 | extend Details = iff(isempty(Details), "New table detected — investigate and classify", Details)
 | extend Vetted = iff(isempty(Vetted), "No", Vetted)
-| project Table, Status, Category, 
+| project Table, Status, Category, Vetted, LastSeen, DaysSince, Details, Notes
+| order by Status asc, Table asc
 
 ---
 
