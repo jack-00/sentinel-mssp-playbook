@@ -82,7 +82,8 @@ live
 | extend Status = iff(isempty(Status), "Unknown", Status)
 | extend Category = iff(isempty(Category), "Unknown — not in watchlist", Category)
 | extend Details = iff(isempty(Details), "New table detected — investigate and classify", Details)
-| project Table, Status, Category, LastSeen, DaysSince, Details, Notes
+| extend Vetted = iff(isempty(Vetted), "No", Vetted)
+| project Table, Status, Category, Vetted, LastSeen, DaysSince, Details, Notes
 | order by Status asc, Table asc
 ```
 
