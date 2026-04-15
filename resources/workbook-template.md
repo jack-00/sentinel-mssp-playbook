@@ -65,10 +65,10 @@ This view shows every data pipeline flowing into the Sentinel environment. Each 
 
 ### Query
 let known = _GetWatchlist('[mssname]-tables')
-| project Table, Category, Details, Vetted, Notes;
-let live = union withsource=TableName *
+| project WLTable = Table, Category, Details, Vetted, Notes;
+let live = union isfuzzy=true withsource=SourceTableName *
 | where TimeGenerated > ago(30d)
-| summarize LastSeen = max(TimeGenerated) by TableName
+| summarize LastSeen = max(TimeGenerated) by SourceTableName
 | extend DaysSince = datetime_diff('day', now(), LastSeen)
 | extend Status = case(
     DaysSince <= 1, "Active",
@@ -76,9 +76,9 @@ let live = union withsource=TableName *
     DaysSince > 7,  "Inactive",
     "No Data"
 )
-| project Table = TableName, Status, LastSeen, DaysSince;
+| project Table = SourceTableName, Status, LastSeen, DaysSince;
 live
-| join kind=fullouter known on Table
+| join kind=fullouter known on $left.Table == $right.WLTable
 | extend Status = iff(isempty(Status), "Unknown", Status)
 | extend Category = iff(isempty(Category), "Unknown — not in watchlist", Category)
 | extend Details = iff(isempty(Details), "New table detected — investigate and classify", Details)
