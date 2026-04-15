@@ -40,3 +40,13 @@
 ## Notes
 
 [Add any relevant notes here.]
+
+
+
+# [mssname]-client — Watchlist CSV Header
+
+Copy the line below into a blank text file and save as `[client]-client.csv`
+
+```
+ClientName,Industry,CompanyURL,OnboardingDate,Bio,TenantID,SubscriptionID,WorkspaceID,WorkspaceName,ResourceGroup,SentinelURL,M365License,DefenderLicense,SentinelCommitmentTier,EntraIDTier,MicrosoftSupportPlan,MicrosoftSupportURL,Notes
+```
