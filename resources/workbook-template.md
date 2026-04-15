@@ -21,20 +21,16 @@ In the workbook editor:
 ## Tab 1 — Splash Screen
 
 ### Header
-```html
-<div align="center">
+```markdown
+# 🛡️ [Client Name]
 
-<h1>🛡️ [Client Name]</h1>
+[Company URL]
 
-<p><a href="[Company URL]">[Company URL]</a></p>
+*[Industry]*
 
-<p><i>[Industry]</i></p>
+---
 
-<br>
-
-<p>[Bio — two to three sentences about who the client is and why security matters to their business.]</p>
-
-<br>
+[Bio — two to three sentences about who the client is and why security matters to their business.]
 
 ---
 
@@ -45,11 +41,7 @@ In the workbook editor:
 | **Escalation Contact** | [Name — Email] |
 | **Sentinel Workspace** | [Link] |
 
-<br>
-
 *Last reviewed: [YYYY-MM-DD]*
-
-</div>
 ```
 
 ---
@@ -57,14 +49,10 @@ In the workbook editor:
 ## Tab 2 — Table Health
 
 ### Header
-```html
-<div>
+```markdown
+## 📊 Table Health
 
-<h2>📊 Table Health</h2>
-
-<p>This view shows every data pipeline flowing into the Sentinel environment. Each row represents a Log Analytics table — the container where a specific type of security data lands. Tables highlighted in <b>red</b> have stopped receiving data and require immediate investigation. Tables marked <b>Unknown</b> are new and have not yet been classified — these should be reviewed and added to the watchlist.</p>
-
-<br>
+This view shows every data pipeline flowing into the Sentinel environment. Each row represents a Log Analytics table — the container where a specific type of security data lands. Tables highlighted in **red** have stopped receiving data and require immediate investigation. Tables marked **Unknown** are new and have not yet been classified — these should be reviewed and added to the watchlist.
 
 | Status | Meaning |
 |---|---|
@@ -73,8 +61,6 @@ In the workbook editor:
 | 🔴 Inactive | Data has stopped — investigate immediately |
 | ⚫ No Data | Table exists but has never received data |
 | 🔵 Unknown | New table detected — not yet classified |
-
-</div>
 ```
 
 ### Query
@@ -113,14 +99,10 @@ live
 ## Tab 3 — SLS and Capabilities
 
 ### Header
-```html
-<div>
+```markdown
+## 🎯 SLS and Capabilities
 
-<h2>🎯 SLS and Capabilities</h2>
-
-<p>This view shows every data source under our service level commitment and the health of key Sentinel capabilities. SLA sources are the data pipelines we are contractually responsible for monitoring. A red status here means we are not meeting our commitment and action is required immediately.</p>
-
-<br>
+This view shows every data source under our service level commitment and the health of key Sentinel capabilities. SLA sources are the data pipelines we are contractually responsible for monitoring. A red status here means we are not meeting our commitment and action is required immediately.
 
 | Status | Meaning |
 |---|---|
@@ -128,8 +110,6 @@ live
 | 🟡 Review | Source is getting stale — investigate |
 | 🔴 Inactive | Source has stopped — SLA breach risk |
 | 🔵 Unknown | Source not yet classified |
-
-</div>
 ```
 
 ---
@@ -137,14 +117,10 @@ live
 ## Tab 4 — Data Sources
 
 ### Header
-```html
-<div>
+```markdown
+## 🔌 Data Sources
 
-<h2>🔌 Data Sources</h2>
-
-<p>This view shows every tracked data source flowing into the environment. Each row represents a specific source within a table — for example a Palo Alto firewall writing to CommonSecurityLog is one source, a Fortinet VPN writing to the same table is another. Sources with zero detections are flagged as coverage gaps.</p>
-
-<br>
+This view shows every tracked data source flowing into the environment. Each row represents a specific source within a table — for example a Palo Alto firewall writing to CommonSecurityLog is one source, a Fortinet VPN writing to the same table is another. Sources with zero detections are flagged as coverage gaps.
 
 | Status | Meaning |
 |---|---|
@@ -152,8 +128,6 @@ live
 | 🟡 Review | Data flowing but getting stale |
 | 🔴 Inactive | Data has stopped — investigate immediately |
 | ⚫ No Data | Source exists but has never received data |
-
-</div>
 ```
 
 ---
@@ -161,14 +135,10 @@ live
 ## Tab 5 — Dependencies
 
 ### Header
-```html
-<div>
+```markdown
+## 🔑 Dependencies
 
-<h2>🔑 Dependencies</h2>
-
-<p>This view shows every external credential, API key, and integration that keeps data sources running. When a credential expires the dependent data source goes silent — often without any obvious indication. Items expiring within 30 days are highlighted and require immediate action.</p>
-
-<br>
+This view shows every external credential, API key, and integration that keeps data sources running. When a credential expires the dependent data source goes silent — often without any obvious indication. Items expiring within 30 days are highlighted and require immediate action.
 
 | Status | Meaning |
 |---|---|
@@ -176,8 +146,6 @@ live
 | 🟡 Expiring Soon | Less than 60 days until expiry |
 | 🔴 Critical | Less than 30 days — action required |
 | ⛔ Expired | Past expiry date |
-
-</div>
 ```
 
 ### Query
@@ -208,14 +176,10 @@ _GetWatchlist('[mssname]-dependencies')
 ## Tab 6 — Detections
 
 ### Header
-```html
-<div>
+```markdown
+## 🔍 Detections
 
-<h2>🔍 Detections</h2>
-
-<p>This view shows every custom detection deployed in this environment. Security detections watch for threats and anomalies. Operational detections monitor platform health. Detections that have not fired in 30 days may indicate a misconfiguration or a source that has gone silent.</p>
-
-<br>
+This view shows every custom detection deployed in this environment. Security detections watch for threats and anomalies. Operational detections monitor platform health. Detections that have not fired in 30 days may indicate a misconfiguration or a source that has gone silent.
 
 | Alert Class | Meaning |
 |---|---|
@@ -224,8 +188,6 @@ _GetWatchlist('[mssname]-dependencies')
 | 🟡 Compliance | Regulatory requirement monitoring |
 | 🟢 Reporting | Feeds workbook and scheduled reports |
 | ⚫ Capability | Sentinel capability dependency monitoring |
-
-</div>
 ```
 
 ### Query
@@ -255,18 +217,12 @@ catalog
 ## Tab 7 — MITRE Coverage
 
 ### Header
-```html
-<div>
+```markdown
+## 🗺️ MITRE Coverage
 
-<h2>🗺️ MITRE Coverage</h2>
+This view shows detection coverage mapped against the MITRE ATT&CK framework. Each enabled detection is mapped to the tactics and techniques it covers. Gaps in coverage represent attack techniques that could go undetected in this environment.
 
-<p>This view shows detection coverage mapped against the MITRE ATT&CK framework. Each enabled detection is mapped to the tactics and techniques it covers. Gaps in coverage represent attack techniques that could go undetected in this environment.</p>
-
-<br>
-
-<p>The built-in Microsoft Sentinel MITRE workbook provides the full interactive heatmap. The table below shows detection-to-technique mappings from our custom detection catalog.</p>
-
-</div>
+The built-in Microsoft Sentinel MITRE workbook provides the full interactive heatmap. The table below shows detection-to-technique mappings from our custom detection catalog.
 ```
 
 ---
@@ -274,14 +230,10 @@ catalog
 ## Tab 8 — Ingestion and Cost
 
 ### Header
-```html
-<div>
+```markdown
+## 💰 Ingestion and Cost
 
-<h2>💰 Ingestion and Cost</h2>
-
-<p>This view shows data ingestion volume and cost per table over the last 30 days. Tables with high ingestion and zero detection coverage represent cost without security value — these are candidates for optimization. All costs are estimates based on Log Analytics billing data.</p>
-
-</div>
+This view shows data ingestion volume and cost per table over the last 30 days. Tables with high ingestion and zero detection coverage represent cost without security value — these are candidates for optimization.
 ```
 
 ### Query
@@ -315,22 +267,16 @@ Usage
 ## Tab 9 — Opportunities
 
 ### Header
-```html
-<div>
+```markdown
+## 💡 Opportunities and Action Items
 
-<h2>💡 Opportunities and Action Items</h2>
-
-<p>This section captures open items, recommendations, and items for discussion from this review. Use this tab as the agenda for the client conversation. Items carry forward from previous reviews until resolved.</p>
-
-<br>
+This section captures open items, recommendations, and items for discussion from this review. Use this tab as the agenda for the client conversation. Items carry forward from previous reviews until resolved.
 
 | Priority | Meaning |
 |---|---|
 | 🔴 High | Immediate action required |
 | 🟡 Medium | Address in next 30 days |
 | 🟢 Low | Address when time permits |
-
-</div>
 ```
 
 ---
