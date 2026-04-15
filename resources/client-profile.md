@@ -48,5 +48,15 @@
 Copy the line below into a blank text file and save as `[client]-client.csv`
 
 ```
-ClientName,Industry,CompanyURL,OnboardingDate,Bio,TenantID,SubscriptionID,WorkspaceID,WorkspaceName,ResourceGroup,SentinelURL,M365License,DefenderLicense,SentinelCommitmentTier,EntraIDTier,MicrosoftSupportPlan,MicrosoftSupportURL,Notes
+ClientName,Industry,CompanyURL,OnboardingDate,Bio,TenantID,SubscriptionID,WorkspaceID,WorkspaceName,ResourceGroup,M365License,DefenderLicense,SentinelCommitmentTier,EntraIDTier,MicrosoftSupportPlan,Notes
 ```
+
+
+_GetWatchlist('[mssname]-client')
+| project ClientName, Industry, CompanyURL, Bio, OnboardingDate,
+    TenantID, WorkspaceID, M365License, DefenderLicense,
+    SentinelCommitmentTier, EntraIDTier,
+    MicrosoftSupportPlan, MicrosoftSupportURL, Notes
+
+
+test
