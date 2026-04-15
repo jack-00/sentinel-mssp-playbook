@@ -67,32 +67,24 @@ This view shows every data pipeline flowing into the Sentinel environment. Each 
 ```kql
 let known = _GetWatchlist('[mssname]-tables')
 | project Table, Category, Details, Vetted, Notes;
-let live = union withsource=Table *
+let live = union withsource=TableName *
 | where TimeGenerated > ago(30d)
-| summarize LastSeen = max(TimeGenerated) by Table
+| summarize LastSeen = max(TimeGenerated) by TableName
 | extend DaysSince = datetime_diff('day', now(), LastSeen)
 | extend Status = case(
     DaysSince <= 1, "Active",
     DaysSince <= 7, "Review",
     DaysSince > 7,  "Inactive",
     "No Data"
-);
+)
+| project Table = TableName, Status, LastSeen, DaysSince;
 live
 | join kind=fullouter known on Table
 | extend Status = iff(isempty(Status), "Unknown", Status)
 | extend Category = iff(isempty(Category), "Unknown — not in watchlist", Category)
 | extend Details = iff(isempty(Details), "New table detected — investigate and classify", Details)
 | extend Vetted = iff(isempty(Vetted), "No", Vetted)
-| project Table, Status, Category, Vetted, LastSeen, DaysSince, Details, Notes
-| order by Status asc, Table asc
-```
-
-**Color coding rules for Status column:**
-- Active → green background
-- Review → amber background
-- Inactive → red background
-- No Data → dark gray background
-- Unknown → blue background
+| project Table, Status, Category, 
 
 ---
 
