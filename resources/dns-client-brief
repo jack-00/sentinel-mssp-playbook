@@ -173,6 +173,72 @@ that happens automatically when logs arrive.
 
 ---
 
+## DNS Component Reference
+
+| Component | Lives Where | Job | Logs To |
+|---|---|---|---|
+| Windows DNS Server | On-premises domain controller | Resolves internal names for domain-joined devices. Forwards unknown public names upstream | `DnsEvents` (only if AMA agent installed) |
+| Azure Firewall DNS Proxy | Azure — edge of the VNet | Intercepts all outbound DNS queries from Azure resources. Logs everything, forwards upstream | `AzureDiagnostics` (Category: AzureFirewallDnsProxy) |
+| Azure Private DNS Resolver | Azure — inside the VNet | Resolves internal Azure private names and bridges hybrid on-prem to Azure name resolution | `DNSQueryLogs` |
+| Public DNS (8.8.8.8 etc.) | Internet — Google, Cloudflare, ISP | Answers public internet name queries. Has no idea about internal company names | Nothing — not in your environment |
+
+---
+
+## How DNS Queries Travel — Path Reference
+
+**On-premises device resolving an internal name:**
+```
+Laptop → Windows DNS Server → knows the answer → responds directly → done
+Nothing leaves the building. Only visible in DnsEvents if AMA agent is installed.
+```
+
+**On-premises device resolving a public internet name:**
+```
+Laptop → Windows DNS Server → does not know → forwarder kicks in
+→ Azure Firewall DNS Proxy → logs it → forwards to public DNS
+→ answer returns through firewall → logged again → back to laptop
+Visible in AzureDiagnostics.
+```
+
+**Azure VM resolving a public internet name:**
+```
+Azure VM → Azure Firewall DNS Proxy → logs it → forwards to public DNS
+→ answer returns through firewall → logged → back to VM
+Visible in AzureDiagnostics.
+```
+
+**Azure VM resolving an internal on-premises name:**
+```
+Azure VM → Azure Firewall DNS Proxy → forwards to Private DNS Resolver
+→ Resolver forwards to on-premises Windows DNS Server → answer comes back
+→ through Resolver → through Firewall → logged → back to VM
+Visible in AzureDiagnostics and DNSQueryLogs.
+```
+
+**Azure service resolving another Azure private resource:**
+```
+Azure Service → Private DNS Resolver → answers from Azure private DNS zones
+→ back to service
+Visible in DNSQueryLogs only.
+```
+
+**Compromised device bypassing DNS entirely (no port 53 controls in place):**
+```
+Malware → sends query directly to 8.8.8.8 on port 53 → goes straight to internet
+→ answer comes back directly
+Visible nowhere. No log captures this.
+```
+
+**Compromised device attempting bypass (port 53 controls in place):**
+```
+Malware → tries to send query directly to 8.8.8.8 on port 53
+→ firewall intercepts and redirects to DNS proxy → logged
+→ or firewall blocks the packet entirely → query fails, malware cannot resolve
+Visible in AzureDiagnostics or blocked entirely.
+```
+
+---
+
 ## Our Scope — Important Clarification
 
 Our team has confirmed that DNS logs are flowing, identified the sources, validated data
