@@ -75,7 +75,6 @@ c | project Field = "Client Name", Value = ClientName, Order = 1
 | union (c | project Field = "Sentinel Commitment Tier", Value = SentinelCommitmentTier, Order = 13)
 | union (c | project Field = "Entra ID Tier", Value = EntraIDTier, Order = 14)
 | union (c | project Field = "Support Plan", Value = MicrosoftSupportPlan, Order = 15)
-| union (c | project Field = "Support URL", Value = MicrosoftSupportURL, Order = 16)
-| union (c | project Field = "Notes", Value = Notes, Order = 17)
+| union (c | project Field = "Notes", Value = Notes, Order = 16)
 | sort by Order asc
 | project Field, Value
