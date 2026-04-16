@@ -1,0 +1,400 @@
+# DNS Log Investigation — Pre-Meeting Reference
+**Client:** [Client Name]
+**Workspace:** [Sentinel Workspace Name]
+**Investigation Date:** [Date]
+**Meeting Date:** [Tomorrow's Date]
+**Investigator:** [Your Name]
+
+---
+
+## Context
+
+Client submitted ticket: *"We are collecting Azure DNS logs. Please confirm and have security team apply detections."*
+
+Zero context provided. This investigation is to determine what is actually flowing, where it comes from,
+what it covers, and what gaps exist — before any commitments are made in tomorrow's meeting.
+
+---
+
+## Investigation Checklist
+
+Work through each step in order. Fill in findings as you go.
+Do not skip steps even if a previous step looks conclusive.
+
+- [ ] Step 1 — Confirm ASIM parser is returning data and check volume
+- [ ] Step 2 — Identify the source of the data
+- [ ] Step 3 — Check DNSQueryLogs table directly
+- [ ] Step 4 — Confirm AzureDiagnostics DNS proxy data
+- [ ] Step 5 — Inspect data quality
+- [ ] Step 6 — Check data connectors in the portal
+- [ ] Step 7 — Check for active and available analytics rules
+
+---
+
+## Step 1 — Confirm ASIM Parser Is Returning Data
+
+**Goal:** Verify logs are flowing and understand the volume and time range.
+
+```kusto
+_Im_Dns()
+| summarize
+    TotalEvents = count(),
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated)
+    by bin(TimeGenerated, 1d)
+| order by TimeGenerated asc
+```
+
+**Findings:**
+
+| Question | Answer |
+|---|---|
+| Is `_Im_Dns()` returning data? | |
+| When did ingestion start? | |
+| Is ingestion consistent day over day? | |
+| Any visible gaps in ingestion? | |
+
+**Notes:**
+
+```
+[paste observations here]
+```
+
+---
+
+## Step 2 — Identify Where the Data Is Coming From
+
+**Goal:** Find the actual source — Azure Firewall, Private DNS Resolver, Windows DNS server, or other.
+This tells you which table the data lives in and what the coverage scope is.
+
+```kusto
+_Im_Dns()
+| summarize Count = count() by DeviceVendor, DeviceProduct, _ResourceId, Computer
+| order by Count desc
+```
+
+**Findings:**
+
+| Field | Value |
+|---|---|
+| DeviceVendor | |
+| DeviceProduct | |
+| _ResourceId (resource name) | |
+| Computer (if agent-based) | |
+| Likely source table | |
+
+**Source Table Reference:**
+
+| Source | Expected Table |
+|---|---|
+| Azure Firewall DNS Proxy | AzureDiagnostics |
+| Azure Private DNS Resolver | DNSQueryLogs |
+| Windows DNS Server via AMA | DnsEvents |
+| Windows DNS Server via legacy agent | DnsEvents |
+
+**Notes:**
+
+```
+[paste observations here]
+```
+
+---
+
+## Step 3 — Check DNSQueryLogs Table Directly
+
+**Goal:** Determine if Private DNS Resolver is in use and logging separately from Azure Firewall.
+
+```kusto
+DNSQueryLogs
+| summarize Count = count(), LastSeen = max(TimeGenerated)
+```
+
+```kusto
+// If data exists, sample it
+DNSQueryLogs
+| project TimeGenerated, QueryName, QueryType, ResponseCode, SourceIpAddress
+| take 20
+```
+
+**Findings:**
+
+| Question | Answer |
+|---|---|
+| Does DNSQueryLogs contain data? | |
+| If yes — when did it start? | |
+| Is this the same data as `_Im_Dns()` or additional? | |
+
+**Notes:**
+
+```
+[paste observations here]
+```
+
+---
+
+## Step 4 — Confirm AzureDiagnostics DNS Proxy Data
+
+**Goal:** Confirm whether Azure Firewall DNS proxy is the source and identify which firewall resource is logging.
+
+```kusto
+AzureDiagnostics
+| where Category == "AzureFirewallDnsProxy"
+| summarize Count = count(), LastSeen = max(TimeGenerated) by Resource, Category, ResourceGroup
+| order by Count desc
+```
+
+```kusto
+// Sample raw records to understand field structure
+AzureDiagnostics
+| where Category == "AzureFirewallDnsProxy"
+| take 20
+```
+
+**Findings:**
+
+| Question | Answer |
+|---|---|
+| AzureFirewallDnsProxy category exists? | |
+| Firewall resource name | |
+| Resource group | |
+| Log volume looks healthy? | |
+
+**Notes:**
+
+```
+[paste observations here]
+```
+
+---
+
+## Step 5 — Inspect Data Quality
+
+**Goal:** Confirm that the critical fields needed for detection are populated.
+If these fields are empty the data is not usable for security monitoring regardless of volume.
+
+```kusto
+_Im_Dns()
+| project TimeGenerated, SrcIpAddr, DnsQuery, DnsQueryType, DnsResponseCode, DnsResponseName, EventResult
+| take 50
+```
+
+```kusto
+// Check what percentage of records have critical fields populated
+_Im_Dns()
+| summarize
+    Total = count(),
+    HasSrcIp = countif(isnotempty(SrcIpAddr)),
+    HasDnsQuery = countif(isnotempty(DnsQuery)),
+    HasResponseCode = countif(isnotempty(DnsResponseCode)),
+    HasEventResult = countif(isnotempty(EventResult))
+| extend
+    PctSrcIp = round(100.0 * HasSrcIp / Total, 1),
+    PctDnsQuery = round(100.0 * HasDnsQuery / Total, 1),
+    PctResponseCode = round(100.0 * HasResponseCode / Total, 1),
+    PctEventResult = round(100.0 * HasEventResult / Total, 1)
+```
+
+**Findings:**
+
+| Field | Populated? | % Populated | Notes |
+|---|---|---|---|
+| SrcIpAddr (client device IP) | | | |
+| DnsQuery (domain that was queried) | | | |
+| DnsQueryType (A, AAAA, MX, TXT, etc.) | | | |
+| DnsResponseCode (NOERROR, NXDOMAIN, etc.) | | | |
+| DnsResponseName (IP returned) | | | |
+| EventResult (Success, Failure) | | | |
+
+**Data Quality Verdict:**
+
+- [ ] Data is complete and usable for detection
+- [ ] Data is partially populated — gaps noted above
+- [ ] Data is not usable — critical fields missing
+
+**Notes:**
+
+```
+[paste observations here]
+```
+
+---
+
+## Step 6 — Check Data Connectors in Portal
+
+**Goal:** Understand which connectors are installed, which are active, and which are dormant.
+
+**Steps (portal, not KQL):**
+
+1. In Sentinel go to **Content Hub**
+2. Search for "DNS"
+3. Note which solutions are installed
+4. Go to **Data Connectors**
+5. Search for "DNS"
+6. For each connector note its status
+
+**Findings:**
+
+| Connector Name | Status | Last Data Received | Notes |
+|---|---|---|---|
+| DNS (AMA) | | | |
+| Azure Firewall | | | |
+| [other] | | | |
+
+**Notes:**
+
+```
+[paste observations here]
+```
+
+---
+
+## Step 7 — Check Analytics Rules
+
+**Goal:** Confirm whether any DNS detections are currently active.
+Identify what OOTB templates are available that could be enabled without custom engineering.
+
+**Steps (portal):**
+
+1. Go to **Analytics > Active Rules**
+2. Search "DNS" — note any active rules
+3. Go to **Analytics > Rule Templates**
+4. Search "DNS" — note available templates and their status
+
+**Active Rules:**
+
+| Rule Name | Severity | Status | Notes |
+|---|---|---|---|
+| | | | |
+| | | | |
+
+**Available Templates (not yet enabled):**
+
+| Template Name | Severity | Data Source Required | Notes |
+|---|---|---|---|
+| | | | |
+| | | | |
+
+**Notes:**
+
+```
+[paste observations here]
+```
+
+---
+
+## Investigation Summary
+
+*Complete this section after all steps are done. This is what you bring into the meeting.*
+
+### What Is Confirmed Working
+```
+[summarize what you found — source, volume, date range, data quality]
+```
+
+### Coverage Scope Based on Architecture
+```
+[what devices and network segments are captured based on what you found]
+```
+
+### Known or Suspected Gaps
+```
+[what is likely NOT covered — on-prem, specific VNets, laptops, etc.]
+```
+
+### Data Quality Issues
+```
+[any fields that are empty or suspicious]
+```
+
+### Detection Status
+```
+[active rules: none / list them]
+[available templates: none / list them]
+[ownership of detection engineering: unresolved — to be discussed]
+```
+
+### Open Questions for the Meeting
+```
+[anything the investigation could not answer that requires client input]
+```
+
+---
+
+## Key Questions to Ask the Client Tomorrow
+
+### Architecture
+- What DNS infrastructure are you using?
+  - ( ) Azure Firewall DNS Proxy
+  - ( ) Azure Private DNS Resolver
+  - ( ) Windows Server DNS (on-premises)
+  - ( ) Third party — name: _______________
+  - ( ) Combination — describe: _______________
+
+- Who enabled DNS logging and when? Is there a change record?
+
+- Are all Azure VNets configured to use the logged DNS service, or only specific ones?
+
+- Are on-premises machines, office laptops, and remote workers covered by this DNS source?
+
+- Are there workloads or segments that use a different DNS server not currently logged?
+
+### Intent
+- What was the trigger for this request? Threat, incident, compliance requirement?
+
+- Are there specific threat scenarios or behaviors you want to detect?
+
+- Are there critical assets you specifically want DNS visibility on?
+
+### Ownership
+- Who is responsible for acting on alerts if detections fire?
+
+- Is there an internal SOC or MSSP handling alert response?
+
+- **Our team scope covers log ingestion validation. Detection engineering and rule
+  maintenance is a separate engagement. Who owns that on your side?**
+
+---
+
+## Coverage Scope Map
+*Fill in during the meeting*
+
+| Segment / Asset Type | Routes Through Logged DNS? | Confirmed By | Notes |
+|---|---|---|---|
+| Azure VMs / cloud workloads | | | |
+| On-premises servers | | | |
+| Office laptops / desktops | | | |
+| Remote / VPN users | | | |
+| DMZ / internet-facing systems | | | |
+| Developer environments | | | |
+| Other: | | | |
+
+---
+
+## What We Are Confirming Today
+
+1. DNS logs are confirmed flowing — source and start date identified
+2. Architecture is understood and documented
+3. Data quality is sufficient for detection use
+4. Coverage scope and gaps are mapped
+5. OOTB detection templates that could be enabled are identified
+6. Detection engineering ownership is resolved and documented in writing
+
+## What We Are NOT Committing To Today
+
+- Writing custom detection rules
+- Tuning or maintaining analytics rules
+- Guaranteeing coverage for assets not routing through the logged DNS service
+- Any detection response SLA without a defined SOC owner on the client side
+
+---
+
+## Standing Process Note
+
+> Any future request to onboard a new data source requires intake before work begins.
+> Intake requires: source architecture, coverage scope, data owner contact,
+> detection ownership RACI, and confirmation of ingestion pipeline.
+> Logs flowing does not equal detections running.
+
+---
+
+*End of investigation reference*
