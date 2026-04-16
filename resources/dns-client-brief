@@ -1,0 +1,187 @@
+# DNS Log Collection — Client Brief
+**Date:** [Meeting Date]
+**Prepared By:** [Your Name]
+**Client:** [Client Name]
+**Sentinel Workspace:** [Workspace Name]
+
+---
+
+## Summary
+
+We have confirmed that DNS logs are actively flowing into the Sentinel workspace from two
+distinct sources. Both sources were identified through direct investigation of the workspace.
+This brief outlines what we found, what each source covers, and what we need to discuss.
+
+---
+
+## What We Found
+
+The workspace is receiving DNS logs from two separate Azure services:
+
+**Source 1 — Azure Firewall DNS Proxy**
+Logs landing in the `AzureDiagnostics` table. Higher volume. Confirmed active and healthy.
+
+**Source 2 — Azure Private DNS Resolver**
+Logs landing in the `DNSQueryLogs` table. Lower volume. Confirmed active and healthy.
+Resolver policies are configured on this resource, indicating an advanced DNS setup.
+
+Both sources are ingested via Azure Diagnostic Settings — a native Azure platform feature
+where the resource sends its logs directly to the Log Analytics workspace Sentinel sits on top of.
+No agent and no additional connector is required for either source.
+
+---
+
+## What Each Source Captures
+
+### Azure Firewall DNS Proxy
+The firewall acts as a middleman for DNS queries. When any device or system inside the
+Azure network needs to resolve a public internet domain — google.com, a software update
+server, or a malicious C2 domain — that query passes through the firewall. The firewall
+logs every query and every response before forwarding it on.
+
+**What this means for coverage:**
+Any Azure VNet resource configured to use the firewall as its DNS server will appear in
+these logs. This is the broadest DNS visibility available in this environment.
+
+**What this means for security:**
+This is the primary detection surface. Threats like malware beaconing, DNS tunneling,
+data exfiltration over DNS, and connections to known malicious domains will show up here.
+
+### Azure Private DNS Resolver
+A Microsoft-managed service running inside Azure whose job is to resolve internal private
+names — resources that do not exist on the public internet. When an Azure VM needs to reach
+a private database, a private storage account, or another internal service, it queries the
+resolver to get the internal IP address. This is essentially the internal phone book for
+Azure resources communicating with each other.
+
+**What this means for coverage:**
+Internal Azure-to-Azure traffic and hybrid on-premises to Azure name resolution.
+Lower volume than the firewall proxy because it only handles internal queries.
+
+**What this means for security:**
+Supplementary detection surface. Useful for spotting unusual internal resource lookups,
+lateral movement between internal systems, and DNS resolver policy violations.
+The `resolverpolicyruleaction` field is particularly useful — it records when a resolver
+policy fired and what action was taken, providing an audit trail for internal DNS controls.
+
+---
+
+## Data Quality
+
+Both sources are returning well-populated records with the critical fields required for
+security monitoring — source IP address, queried domain name, query type, and response code.
+Data is consistent with no visible gaps in ingestion.
+
+Ingestion delay on DNSQueryLogs is approximately 90 to 170 seconds. This is normal and
+expected for diagnostic settings based ingestion.
+
+---
+
+## What These Logs Are Capable of Capturing
+
+Given the architecture confirmed above, these logs will capture DNS activity from:
+
+- Azure Virtual Machines and cloud workloads inside VNets routed through the firewall
+- Azure-native services resolving internal private names through the resolver
+- Any hybrid on-premises systems configured to forward internal DNS queries to the resolver
+
+---
+
+## Known Coverage Gaps — To Be Confirmed with Client
+
+The following are likely outside current DNS log coverage based on what we know.
+These need to be confirmed in our conversation:
+
+- On-premises machines and servers using a local Windows DNS server not connected to Azure
+- Office laptops and desktops not routing DNS through the Azure Firewall
+- Remote and VPN users depending on how their DNS is configured
+- Any Azure VNets not configured to use the firewall as their DNS server
+
+---
+
+## Critical Gap — On-Premises Domain Controllers
+
+If the client has on-premises Windows DNS servers running on their domain controllers,
+those servers are resolving internal name queries for every domain-joined device in the
+building — laptops, desktops, servers. None of that traffic is currently visible in Sentinel.
+
+**Why this matters:**
+Internal DNS queries never leave the building. They are answered entirely on-premises and
+never touch the Azure Firewall proxy. This means a compromised device performing internal
+reconnaissance — rapidly resolving internal server names to map the network — would be
+completely invisible in the current setup.
+
+**What is required to close this gap:**
+The DNS AMA connector deployed with an AMA agent installed on every domain controller
+running DNS. This is a phase two recommendation that requires coordination with the client's
+on-premises team.
+
+**Questions to ask:**
+- Do you have on-premises domain controllers running Windows DNS?
+- How many DNS servers are running on-premises across all locations?
+- Who manages those servers and can we coordinate agent deployment?
+
+---
+
+## Critical Gap — DNS Bypass via Direct External Queries
+
+Even with the Azure Firewall DNS proxy in place there is a known attacker technique where
+malware bypasses corporate DNS entirely. Instead of asking the local DNS server or the
+firewall proxy, it sends DNS queries directly to a public DNS server like 8.8.8.8 on
+port 53. If outbound port 53 traffic is not blocked or intercepted at the network level,
+those queries leave the environment completely unlogged.
+
+**Why this matters:**
+Sophisticated malware is often hardcoded with external DNS server IP addresses specifically
+to avoid corporate DNS logging and filtering. If a compromised device uses this technique,
+no DNS log in the current setup will capture it.
+
+**The fix is not a logging change — it is a network control:**
+- Block all outbound port 53 traffic to anything except approved DNS servers, or
+- Redirect all outbound port 53 traffic back to the Azure Firewall DNS proxy regardless
+  of where it was addressed — so even bypass attempts get intercepted and logged
+
+**Questions to ask:**
+- Are there network firewall rules restricting outbound port 53 traffic?
+- Are VNets configured to only use the Azure Firewall as their DNS server?
+- Is DNS interception or forced proxying configured anywhere in the environment?
+
+---
+
+## What Is Not in Place Yet
+
+No DNS analytics rules are currently active in the workspace. Microsoft provides a library
+of out of the box detection templates designed specifically for normalized DNS data. These
+are available but have not been enabled.
+
+Enabling these rules is a detection engineering decision that requires confirmation of
+data quality, coverage scope, and a defined owner for alert response. This is not something
+that happens automatically when logs arrive.
+
+---
+
+## Open Items for Today's Meeting
+
+1. Confirm which Azure VNets are configured to route DNS through the firewall
+2. Confirm whether on-premises domain controllers are running Windows DNS and how many
+3. Confirm whether outbound port 53 is restricted or intercepted at the network level
+4. Confirm what the resolver policies are configured to do
+5. Confirm who owns alert response if detections fire
+6. Confirm whether detection engineering is in scope for our engagement or requires
+   a separate workstream
+7. Discuss phase two recommendation — DNS AMA agent on domain controllers
+
+---
+
+## Our Scope — Important Clarification
+
+Our team has confirmed that DNS logs are flowing, identified the sources, validated data
+quality, and documented the architecture. This is our scope for this engagement.
+
+Detection engineering — writing, enabling, tuning, and maintaining analytics rules —
+is a separate function that requires a defined owner. We are prepared to discuss what
+that looks like but cannot commit to owning it without a defined engagement scope.
+
+---
+
+*Brief prepared following direct workspace investigation prior to meeting.*
