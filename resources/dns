@@ -22,6 +22,7 @@ Work through each step in order. Fill in findings as you go.
 Do not skip steps even if a previous step looks conclusive.
 
 - [ ] Step 1 — Confirm ASIM parser is returning data and check volume
+- [ ] Step 1a — Understand what the parser is actually looking at (sources and sub-parsers)
 - [ ] Step 2 — Identify the source of the data
 - [ ] Step 3 — Check DNSQueryLogs table directly
 - [ ] Step 4 — Confirm AzureDiagnostics DNS proxy data
@@ -58,6 +59,235 @@ _Im_Dns()
 
 ```
 [paste observations here]
+```
+
+---
+
+## Step 1a — Understand What the ASIM Parser Is Actually Looking At
+
+**Goal:** `_Im_Dns()` is not magic. It was hardcoded by Microsoft to query specific tables for
+specific sources. It only knows about sources Microsoft has explicitly written a parser for.
+This step lets you see inside the parser so you know exactly what it is and is not checking.
+
+**Important to understand before running these:**
+- `_Im_Dns()` is called the **unifying parser** — it is the top level function that calls everything else
+- Underneath it are **filtering parsers** — one per supported data source (e.g. `_ASim_Dns_AzureFirewall`)
+- Each filtering parser targets a specific table and normalizes that source's raw fields into ASIM schema
+- The data is **not transformed when it lands** — it stays raw in the original table
+- Normalization happens **at query time** — meaning only when you run `_Im_Dns()` does the translation happen
+- This means you can always go back to the raw table to see the untouched original log
+
+---
+
+### Read the Parser Source Code
+
+Run just the function name with no parentheses. Sentinel will show you the full KQL logic inside it.
+You will see a list of sub-parser function calls — each one is a supported source.
+
+```kusto
+_Im_Dns
+```
+
+**What to look for:** A list of function calls starting with `_ASim_Dns_` — these are your supported sources.
+Note which ones are called. This is the complete list of sources this parser knows about.
+
+**Findings:**
+
+```
+[paste the list of sub-parsers you see here — or note if you cannot read the definition]
+```
+
+---
+
+### See Which Sub-Parsers Are Actually Returning Data Right Now
+
+```kusto
+_Im_Dns()
+| summarize Count = count() by EventProduct, EventVendor, DeviceVendor, DeviceProduct
+| order by Count desc
+```
+
+**What this tells you:** Each row is a distinct source type that contributed records.
+One row means one source is feeding the parser. Multiple rows means multiple sources.
+This is your answer to "what kind of DNS logs do we actually have."
+
+**Findings:**
+
+| EventVendor | EventProduct | DeviceVendor | DeviceProduct | Count | Notes |
+|---|---|---|---|---|---|
+| | | | | | |
+| | | | | | |
+
+---
+
+### Trace a Single Record Back to Its Raw Table
+
+This is the most surgical check. Take one parsed record and find the exact original log it came from.
+
+**Step 1 — Grab one record and note its key fields:**
+
+```kusto
+_Im_Dns()
+| take 1
+| project TimeGenerated, SrcIpAddr, DnsQuery, _ResourceId, EventProduct, EventVendor
+```
+
+**Step 2 — Use the ResourceId and timestamp to find the raw record:**
+
+```kusto
+// Paste the _ResourceId value from above into this query
+// Adjust the timestamps to be 1 minute before and after the TimeGenerated value you saw
+AzureDiagnostics
+| where _ResourceId == "PASTE_RESOURCE_ID_HERE"
+| where TimeGenerated between (datetime(PASTE_TIMESTAMP_MINUS_1MIN) .. datetime(PASTE_TIMESTAMP_PLUS_1MIN))
+| take 5
+```
+
+> If this returns records you have confirmed that `AzureDiagnostics` is the raw table behind the parsed data.
+> If it returns nothing, try `DNSQueryLogs` or `DnsEvents` with the same filter.
+
+**Findings:**
+
+| Question | Answer |
+|---|---|
+| Raw table confirmed as | |
+| Raw record found — Y/N | |
+| Raw fields look as expected — Y/N | |
+
+**Notes:**
+
+```
+[paste observations here]
+```
+
+---
+
+### How to Check If an ASIM Parser Exists for Any Given Source
+
+When a client tells you they are enabling a new DNS source and you need to know if ASIM supports it,
+use these two methods:
+
+**Method 1 — Check Microsoft's official ASIM DNS documentation:**
+`https://aka.ms/AzSentinelDNSNormalizationDocs`
+This page lists every supported source, the parser name, and the table it uses.
+
+**Method 2 — Browse parsers directly in your workspace:**
+In the Sentinel Logs editor, open the left panel and go to the **Functions** section.
+Filter by `_Im_` to see all unifying parsers.
+Filter by `_ASim_Dns` to see all DNS-specific filtering parsers deployed in the workspace.
+If the parser for a source is listed, it is supported. If it is not listed, you are in custom territory.
+
+---
+
+## ASIM DNS Function Reference
+
+Use this section any time you are writing a query, validating a source, or deciding which
+function to use for a detection. There are three tiers to understand.
+
+---
+
+### The Three Tiers
+
+**Tier 1 — The Unifying Parser**
+`_Im_Dns()` is the top level function. It calls every source-specific parser underneath it,
+unions all results into one normalized dataset, and returns everything in one clean output.
+The `Im` stands for intermediary. This is the default for investigations and detections.
+
+**Tier 2 — The Filtering Parsers**
+`_ASim_Dns_[SourceName]()` functions are source-specific. Each one targets exactly one data
+source and normalizes only that source's data. These are the building blocks that `_Im_Dns()`
+calls internally. The `ASim` prefix stands for Advanced Security Information Model.
+
+**Tier 3 — Raw Tables**
+The underlying tables like `AzureDiagnostics`, `DNSQueryLogs`, `DnsEvents`. Raw and unparsed.
+Go here when troubleshooting parser mappings or verifying what actually landed.
+
+---
+
+### Critical Naming Convention — Product Not Table
+
+Parser names are always based on the **product that generated the log**, not the table it
+landed in. `AzureDiagnostics` is a generic container table that many services write to.
+The parser is named after the service that created the data, not the bucket it lives in.
+
+> `_ASim_Dns_AzureFirewall()` exists. `_ASim_Dns_AzureDiagnostics()` does NOT exist and will error.
+
+When looking up a parser name always ask: *what product generated this log?* — not *what table did it land in?*
+
+| Product That Generated the Log | Table It Lands In | Parser Function |
+|---|---|---|
+| Azure Firewall DNS Proxy | AzureDiagnostics | `_ASim_Dns_AzureFirewall()` |
+| Azure Private DNS Resolver | DNSQueryLogs | `_ASim_Dns_Native()` |
+| Windows DNS Server via AMA | DnsEvents | `_ASim_Dns_MicrosoftNXlog()` |
+| Windows DNS Server via OMS agent | DnsEvents | `_ASim_Dns_MicrosoftOMS()` |
+| Infoblox BloxOne | CommonSecurityLog | `_ASim_Dns_InfobloxBloxOne()` |
+
+---
+
+### Function Quick Reference
+
+| Function | What It Does | When to Use It |
+|---|---|---|
+| `_Im_Dns()` | Unifying parser — all sources, fully normalized | Default for all investigations and detections |
+| `_Im_Dns(starttime=, endtime=)` | Same but scoped to a time window | Large time ranges where performance matters |
+| `_Im_Dns(eventresult='Failure')` | Only failed queries — NXDOMAIN, REFUSED etc. | Scoping to failed resolutions only |
+| `_Im_Dns(domain_has_any=dynamic([...]))` | Filter to specific domains inside the parser | Targeted domain investigation |
+| `_ASim_Dns_AzureFirewall()` | Azure Firewall DNS proxy logs only | Troubleshooting, source isolation |
+| `_ASim_Dns_Native()` | Azure Private DNS Resolver only | Private DNS Resolver environments |
+| `_ASim_Dns_MicrosoftNXlog()` | Windows DNS via NXLog agent only | On-prem Windows DNS troubleshooting |
+| `imDns()` | Older unifying parser — legacy, no underscore | Older workspaces only — prefer `_Im_Dns()` |
+
+> **Note on `imDns()` vs `_Im_Dns()`:** The underscore prefix version is the newer
+> built-in workspace function Microsoft deploys automatically. The non-underscore version
+> is the older community-deployed parser requiring manual installation. If you see both
+> in a workspace the environment has been around for a while and the old parser was never
+> cleaned up. Always use the underscore version.
+
+---
+
+### Should Detections Use `_Im_Dns()` or a Source-Specific Parser?
+
+**Use `_Im_Dns()` when:**
+- You want the detection to work regardless of what DNS source the environment uses
+- The client may change DNS infrastructure in the future
+- You are writing or validating OOTB Sentinel analytics rules
+- This is the right default for almost every detection
+
+**Use `_ASim_Dns_[Source]()` when:**
+- You need a field that only exists in one specific source
+- You are isolating one source to troubleshoot a detection
+- Performance is a concern and you know only one source exists
+- You want to be explicit about what a query targets
+
+> OOTB Sentinel analytics rules are written against `_Im_Dns()`. If the ASIM layer is
+> correctly normalizing your data, all those rules automatically have coverage.
+> Your data quality check in Step 5 is what validates that the ASIM layer can be trusted.
+
+---
+
+### Filtering Inside the Function vs Filtering After
+
+Filtering inside the function call is always faster. The filter is applied before the union
+across all sources rather than after — which matters significantly at scale.
+
+```kusto
+// SLOWER — filters after union across all sources
+_Im_Dns()
+| where EventResult == "Failure"
+
+// FASTER — filters are applied before the union happens
+_Im_Dns(eventresult='Failure')
+```
+
+```kusto
+// Combining parameters for targeted, efficient queries
+_Im_Dns(
+    starttime=ago(24h),
+    endtime=now(),
+    eventresult='Failure',
+    domain_has_any=dynamic(['suspicious-domain.com','malware-c2.net'])
+)
+| project TimeGenerated, SrcIpAddr, DnsQuery, DnsResponseCode, EventResult
 ```
 
 ---
