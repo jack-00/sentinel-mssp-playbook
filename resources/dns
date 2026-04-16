@@ -627,4 +627,1564 @@ Identify what OOTB templates are available that could be enabled without custom 
 
 ---
 
-*End of investigation reference*
+---------
+
+You are a microsoft Sentinel Engineer and help co-manage multiple Microsoft Sentinel environments. You have a client that has mentioned that they have started ingesting DNS logs. They simply opened a ticket that said "we are collecting Azure DNS logs. Please confirm and have security team apply detection's " - This is extremely troubling when clients make requests like this with zero context. This is what I need help doing. My end goal is to have a plan in place for our meeting with them tomorrow but also want to work some thoughts out with you around proper way to outline this in my head and prepare for the meeting. I am new to sentinel and a lot of ways security in general so I need help on getting my mind up to speed on how to approach this situation. - I don't just need a solution here. I want a framework that I can use for any new data source that gets requested by our team. I also want to understand DNS better. I want to know exactly what I need to know about it and then how to think about it from a engineering perspective and consulting. I imagine there are many ways to do the same thing so I need rules in my mind to help guide results. There is also the aspect of detection's. our team does not maintain and manage security detections. as we work through ideas and modes of thinking I also want you to keep in the back of your mind the idea of making a pdf that we can share with clients that will fill them in on everything we need to know about every data source. We cannot have them doing this again. -- So with that, let me first tell you how I am thinking about it. DNS. Domain name Services? when you plug a device into a port, an arp request shoots out to say 'im here' the computer is then hit with dhcp which fills the computer in on where to send dns requests and also assigns an ip address and all that jazz. From a security perspective I imagine that when they say DNS logs they are looking for logs from whatever system is managing dns. Since this user is using sentinel its more than likely that they are a microsoft house and the fact they said "azure dns" tells me its more than likely logging somewhere in the cloud. I can see some data connectors involving dns are installed but I don't see that they are in use. The only tables that look relevant to dns I see are AsimAuditEventLogs, Asimnetworksession logs, asimwebsessionslogs, awscloudtrail, AzureDiagnostics, devicenetworkevents, dnsquerylogs. If I had to guess I do see inside azurediagnostic that there are categories and I can see that azure firewall logs are there and I see dns query and response via azure firewall proxy, traffic and seuciry event logs from azure firewall. I am not sure what is in DNSQuerylogs or if that stuff matters.  Another thing thats interesting is I see _Im_Dns() which when I run it shows me dns logs that looks to be parsed via asim. - I feel like this is more than likely the logs they are talking about what what we can use for detections but it made me stop and realize that I dont know how to think about this properly. -- I want to know how to think like an engineer here. For example. when someone says they want to collect dns logs I assume they are talking about dns request logs. where did they request to go and were they granted. Are these the logs people need when they say 'dns logs' I assume there are many different kinds and I dont know which ones are important to focus on. Additionally, do companies normally have one path for this? meaning in this case it looks like these are azure firewall proxy logs which I guess means that when devices behind the firewall make requests they traverse the firewall and then we configure the firewall to forward those logs somehow to sentinel. I dont know how this is done or what needs to actually be done or checked on the client side other than just seeing the logs. Another thing is this. I assume there are all kinds of flavors of dns logs depending on where you are getting them from. If you are a client how do you think about this? I feel like if it was me I would want dns logs from all critical assets so part of this would be to make sure the devices I want to track are using the dns service from which I am grabbing the logs. -- I hope all of this was enough for you to guide me. I want to talk with you and put some notes together to drive our conversation tomorrow with the client.
+9:43 PM
+
+This is a great brain dump — and the fact that you're thinking this carefully before the meeting means you're already ahead of most people in this field. Let me work through this with you properly, because there are several layers here: DNS fundamentals, the engineering/consulting framework, the Sentinel-specific investigation, and the client management problem. Let's build your mental model from the ground up.
+Part 1: DNS — What You Actually Need to Know
+
+Your intuition was mostly right. Let me sharpen it.
+
+The flow you described is correct but incomplete. When a device joins a network: DHCP assigns an IP, a default gateway, and a DNS server address. From that point forward, every time that device wants to reach anything by name (google.com, internal-app.corp, malware-c2.ru), it sends a DNS query to that DNS server. The DNS server resolves it and returns an IP. The device then connects to that IP.
+
+Why DNS is a goldmine for security:
+
+DNS is one of the very few protocols that almost everything talks to. Malware talks to DNS. Exfiltration tools use DNS. Ransomware beacons over DNS. A compromised host that can't reach the internet directly will still often try DNS because port 53 is almost always allowed outbound. This makes DNS logs uniquely valuable — they are a near-universal record of "what was every device trying to reach."
+
+The types of DNS logs that exist:
+Log Type	What It Is	Security Value
+DNS Query logs	Client asked for a name, resolver received it	HIGH — this is what people mean 99% of the time
+DNS Response logs	What the resolver answered back (IP returned, NXDOMAIN, etc.)	HIGH — tells you if resolution succeeded and to what IP
+DNS Zone transfer logs	Replication between DNS servers	Medium — attack vector if exposed
+DNS server audit logs	Config changes to the DNS service itself	Medium — detects tampering
+DNSSEC validation logs	Cryptographic validation failures	Lower for most orgs
+
+When a client says "DNS logs," they mean query + response logs. That is the data. Everything else is secondary.
+
+The critical insight about DNS coverage — you nailed this:
+
+You are absolutely right that the question is not just "do we have DNS logs" but "which devices' DNS traffic do we actually see?" If a device is using a DNS server that isn't logging, it's invisible to you. This is one of the most important questions you need to ask tomorrow.
+Part 2: The Engineering Mental Model for Any New Data Source
+
+Here is the framework you asked for. Burn this into your head. Every single time a new data source comes up, walk through these five layers in order.
+
+Layer 1: What is the source and what does it actually log?
+
+    What system/service generates this data?
+    What events does it record? What does it not record?
+    What is the log format? (Structured JSON, syslog, CEF, custom?)
+    What is the log volume and retention at the source?
+
+Layer 2: How does the data get to Sentinel?
+
+    Is there a native connector? An agent? A Diagnostic Setting? A custom data collection rule (DCR)?
+    Is it push or pull?
+    Who configured it? Who owns the pipeline?
+    Is there potential for data loss in transit?
+
+Layer 3: What table does it land in, and is it normalized?
+
+    Raw table (like AzureDiagnostics) vs. purpose-built table (like DNSQueryLogs)
+    Is it in ASIM format or does it need a parser?
+    What fields are actually populated vs. theoretically available?
+    Is the _Im_Dns() function returning data, and does it look right?
+
+Layer 4: What is the coverage and completeness?
+
+    Which assets/devices/segments are actually covered by this log source?
+    What falls outside coverage?
+    Are there gaps you need to document?
+    Is the data complete enough to be reliable for detections?
+
+Layer 5: What can you detect with it, and who owns detection engineering?
+
+    What threat scenarios does this data enable you to detect?
+    What is the noise level / false positive risk?
+    Who is responsible for writing and maintaining rules?
+    Are there existing community or vendor rules you can leverage (OOTB Sentinel analytics, GitHub community, MITRE mappings)?
+
+This is your checklist for every client conversation about a new data source. If you can't answer all five layers, you are not ready to say the data source is "working."
+Part 3: The Detection Engineering Boundary Problem
+
+You mentioned your team doesn't manage detections. This needs to be crystal clear in writing with every client. Here's how to think about it:
+
+There are three distinct roles in this space and clients often conflate them:
+
+    Log ingestion engineering — Getting data into Sentinel reliably. This is plumbing. You own this.
+    Detection engineering — Writing, tuning, and maintaining analytics rules. This requires ongoing security expertise. If you don't own this, say so explicitly.
+    SOC / Alert response — Acting on the detections that fire. This is usually a different team or an MSSP.
+
+The client's ticket assumes all three happen automatically when logs arrive. They don't. This needs to be a standing part of your client onboarding and intake process.
+Part 4: What's Actually Happening in This Sentinel Environment
+
+Based on what you described, here is my read of the situation:
+
+The _Im_Dns() function returning data is the most important signal you found. That function is the ASIM DNS parser — it normalizes DNS data from whatever underlying source exists into a standard schema. The fact that it returns data means DNS logs are flowing somewhere. The question is where they come from.
+
+Your observation about AzureDiagnostics showing Azure Firewall DNS proxy logs is likely the answer. Azure Firewall has a DNS proxy feature — when enabled, it intercepts DNS queries from VNet resources, resolves them, and can log those queries. That is a legitimate and common architecture. What it means from a coverage standpoint is that only resources routing their DNS through that Azure Firewall are represented in the logs.
+
+The DNSQueryLogs table is a separate, newer table that Azure Private DNS Resolver uses. If they're using Private DNS Resolver, logs land there. If they're using Azure Firewall DNS proxy, logs land in AzureDiagnostics. These are different architectures and it matters which one you're looking at.
+
+What you need to verify before the meeting if possible:
+kusto
+
+// Check what's actually in the ASIM DNS parser and where it comes from
+_Im_Dns()
+| summarize Count=count(), FirstSeen=min(TimeGenerated), LastSeen=max(TimeGenerated) by _ResourceId, _SubscriptionId
+| order by Count desc
+
+kusto
+
+// Check DNSQueryLogs directly
+DNSQueryLogs
+| take 50
+
+kusto
+
+// Check AzureDiagnostics for DNS proxy specifically
+AzureDiagnostics
+| where Category == "AzureFirewallDnsProxy"
+| take 50
+
+This will tell you exactly what table is feeding _Im_Dns() and what the data looks like.
+Part 5: Your Meeting Agenda for Tomorrow
+
+Here is how I'd structure the conversation. You're not just validating that logs exist — you're doing a proper intake.
+
+Opening frame: "We received your ticket and we want to make sure we set this up for success. Before we can confirm the data is production-ready or apply any detections, we need to walk through a few things together."
+
+Questions to drive:
+
+    What DNS infrastructure are you using? Azure Firewall DNS proxy, Azure Private DNS Resolver, Windows DNS servers, a third-party like Infoblox or Cisco Umbrella, or a combination?
+    What was the motivation for enabling this? Was there a specific threat or incident? A compliance requirement? This tells you what they actually want to detect.
+    Which workloads and network segments are routing DNS through the logged DNS service? What is outside that scope?
+    Who enabled the DNS logging and when? Is there a change record?
+    Who is responsible for acting on detections if they fire? Is there a SOC? Is it internal or outsourced?
+    What is their expectation of your team specifically — ingestion validation, detection writing, or both?
+
+Your deliverable out of the meeting: A clear written summary of what is confirmed working, what the coverage gaps are, and a RACI that spells out who owns detection engineering. That document is also the template for every future data source conversation.
+Part 6: The Client-Facing PDF Framework
+
+This is the right instinct and here's how to structure it. Every data source gets a one-pager or two-pager with these sections:
+
+    What this data source is — plain English, one paragraph
+    What it logs and what it doesn't — explicit about gaps
+    How it gets to Sentinel — the connector/pipeline
+    What table it lands in and how to query it — sample KQL
+    Coverage considerations — what assets must be configured to appear in the logs
+    What detections are possible — threat scenarios, not specific rule names
+    What your team does and doesn't own — the RACI boundary
+    What we need from you (the client) — prerequisites before we can validate
+
+DNS would be the first one of these. Once you have the framework, you can systematically build it out for every connector they add.
+
+The bottom line for tomorrow: Your job in that meeting is not to say "yes the logs are working, detections incoming." Your job is to say "we found DNS data flowing, we need to confirm the architecture, validate coverage, understand your environment, and clarify who owns what." That is the professional answer and any client that pushes back on that process is a client that will blame you when detections miss something six months from now.
+
+Want me to help you draft the actual meeting notes document, the client PDF template, or build out some of the KQL validation queries in more detail?
+
+this is great but I now want to work with you to create a KB for my team in raw markdown. Before we do that though I want to continue to ask you questions. I want to make the documentation very informative and to make it for someone with very minimal networking and security knowledge. I will tell you when I am ready to create it but the way I like to have things written is this: First describe what you will learn as you read. Then provide a real life scenario and use metaphor and story to prime the reader. Then breakdown some key definitions and modes of thinking one would need to load up their brains. Then give a simple itemized list of what the document will cover. - Before we get into that though I want to complete the prep for this meeting and also get a raw markdown note to reference tomorrow. - to start please summarize what we know and my next actions to perform an investigation to verify some things.
+9:57 PM
+Summary of Where We Are
+
+You received a vague client ticket saying they're collecting Azure DNS logs and want detections applied. Through your own investigation in Sentinel you found:
+
+    The ASIM DNS parser _Im_Dns() is returning data, which means DNS logs are flowing somewhere
+    AzureDiagnostics contains Azure Firewall DNS proxy logs with query and response categories visible
+    DNSQueryLogs table exists but you haven't confirmed what's in it
+    Several data connectors related to DNS appear installed but their active status is unclear
+    Your team does not own detection engineering, and this boundary was never established with this client in writing
+
+The core problem is that you have signals that something is working but you don't know what architecture is behind it, what coverage it provides, or what the client actually wants out of this.
+What You Don't Know Yet
+
+    Which DNS infrastructure the client is actually using (Firewall DNS proxy vs Private DNS Resolver vs something else)
+    Whether _Im_Dns() is pulling from one source or multiple
+    Which network segments and devices are covered by whatever is logging
+    What threat or compliance requirement drove this request
+    Who owns detection engineering on their side
+    Whether the client understands that logs flowing does not equal detections running
+
+Your Pre-Meeting Investigation Checklist
+
+Run these in order. The goal is to walk into tomorrow's meeting with a clear picture of what exists so you can ask informed questions rather than discovery questions.
+
+Step 1 — Confirm the ASIM parser is returning data and understand the volume
+kusto
+
+_Im_Dns()
+| summarize
+    TotalEvents = count(),
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated)
+    by bin(TimeGenerated, 1d)
+| order by FirstSeen asc
+
+This tells you when logs started flowing and whether ingestion is consistent or spotty.
+
+Step 2 — Find out where the data is actually coming from
+kusto
+
+_Im_Dns()
+| summarize Count = count() by _ResourceId, Computer, DeviceVendor, DeviceProduct
+| order by Count desc
+
+This surfaces the actual source. You're looking for Azure Firewall resource IDs, DNS resolver names, or agent-based sources. This is your architecture answer.
+
+Step 3 — Check DNSQueryLogs directly
+kusto
+
+DNSQueryLogs
+| summarize Count = count(), LastSeen = max(TimeGenerated)
+| take 10
+
+If this returns nothing or errors, that table is empty. If it returns data, you have a second source and need to understand which one _Im_Dns() is normalizing.
+
+Step 4 — Confirm the AzureDiagnostics DNS proxy data
+kusto
+
+AzureDiagnostics
+| where Category == "AzureFirewallDnsProxy"
+| summarize Count = count(), LastSeen = max(TimeGenerated) by Resource, Category
+| order by Count desc
+
+This confirms whether Azure Firewall DNS proxy is the source and which firewall resource is doing the logging.
+
+Step 5 — Look at what the actual records contain
+kusto
+
+_Im_Dns()
+| project TimeGenerated, SrcIpAddr, DnsQuery, DnsQueryType, DnsResponseCode, DnsResponseName, EventResult
+| take 50
+
+This is where you check data quality. You want to see populated source IPs (which devices are querying), real domain names, response codes (NXDOMAIN, NOERROR), and results. If source IPs are missing or fields are blank that's a data quality problem you need to flag.
+
+Step 6 — Check what connectors are installed and their status
+
+In the Sentinel portal go to Content Hub and filter by DNS. Note which solutions are installed. Then go to Data Connectors and look at the status of anything DNS related. Screenshot this. You want to know if connectors show as connected, disconnected, or never received data.
+
+Step 7 — Check if any analytics rules are already active for DNS
+kusto
+
+// This is a portal check not KQL
+// Go to Analytics > Active Rules and search "DNS"
+// Also check Analytics > Rule Templates and search "DNS" to see what's available OOTB
+
+Note what exists. This is important because when the client asks about detections tomorrow you can speak to what Microsoft ships out of the box versus what requires custom engineering.
+What You Want to Know Walking Into the Room Tomorrow
+
+After running those seven steps you should be able to answer:
+
+    DNS logs are confirmed flowing, sourced from X, started on Y date
+    Coverage is limited to devices routing DNS through X infrastructure
+    Data quality looks good / has the following gaps
+    No detection rules are currently active against this data
+    The following OOTB rule templates exist and could be enabled with client sign-off
+    Detection engineering ownership is unresolved and needs to be addressed in the meeting
+
+The Markdown Meeting Note
+
+Here is a raw reference doc you can pull up tomorrow.
+markdown
+
+# DNS Log Validation — Client Meeting Prep
+**Date:** [Tomorrow's Date]
+**Status:** Pre-meeting investigation in progress
+**Sentinel Workspace:** [Client workspace name]
+
+---
+
+## Why This Meeting Exists
+
+Client submitted ticket: *"We are collecting Azure DNS logs. Please confirm and have security team apply detections."*
+
+No context was provided around architecture, motivation, coverage expectations, or detection ownership.
+This meeting is to fill those gaps before any commitments are made.
+
+---
+
+## What We Have Confirmed (Pre-Meeting)
+
+- [ ] `_Im_Dns()` returns data — logs are flowing
+- [ ] Source of data identified as: ___________________________
+- [ ] Log ingestion started: ___________________________
+- [ ] `DNSQueryLogs` table status: empty / populated (circle one)
+- [ ] `AzureDiagnostics` AzureFirewallDnsProxy category: confirmed / not found (circle one)
+- [ ] Data quality check: SrcIpAddr populated Y/N | DnsQuery populated Y/N | ResponseCode populated Y/N
+- [ ] Active analytics rules for DNS currently: YES / NO
+- [ ] OOTB rule templates available for DNS: YES / NO — count: ____
+
+---
+
+## Open Questions for Client
+
+### Architecture
+- What DNS infrastructure are you using?
+  ( ) Azure Firewall DNS Proxy
+  ( ) Azure Private DNS Resolver
+  ( ) Windows Server DNS
+  ( ) Third party (Infoblox, Umbrella, etc.)
+  ( ) Combination — describe: ___________________________
+
+- Who enabled DNS logging and when? Is there a change record?
+
+- Are all network segments routing through this DNS service, or only specific VNets/subnets?
+
+- Are on-premises devices included in DNS coverage or only cloud workloads?
+
+### Intent and Scope
+- What was the trigger for this request? Specific threat, incident, compliance requirement?
+
+- Are there specific domains, query types, or behaviors you are trying to detect?
+
+- Are there critical assets you specifically want DNS visibility on?
+
+### Detection Ownership
+- Who is responsible for acting on alerts if detections fire?
+
+- Is there an internal SOC or an MSSP handling alert response?
+
+- Our team's scope covers log ingestion validation. Detection engineering and rule
+  maintenance is a separate engagement. Who owns that on your side?
+
+---
+
+## What We Are Confirming Today
+
+1. DNS logs are flowing into Sentinel — confirmed or not confirmed
+2. The source architecture and what it covers
+3. Data quality is sufficient for detection use
+4. Coverage gaps that exist based on the architecture
+5. OOTB detections that could be enabled with no custom engineering
+6. Clear RACI on who owns detection engineering going forward
+
+---
+
+## What We Are NOT Committing To Today
+
+- Writing custom detection rules
+- Tuning or maintaining analytics rules
+- Guaranteeing coverage for assets not routing through the logged DNS service
+- Any SLA on detection response without a defined SOC owner
+
+---
+
+## DNS Coverage Scope Map (fill in during meeting)
+
+| Segment / Workload | Routes Through Logged DNS? | Confirmed By |
+|---|---|---|
+| Azure VNets | | |
+| On-premises devices | | |
+| Remote/VPN users | | |
+| DMZ / internet-facing | | |
+| Developer environments | | |
+
+---
+
+## Post-Meeting Actions
+
+- [ ] Document confirmed architecture in client runbook
+- [ ] Update data source inventory
+- [ ] Send written summary of RACI to client stakeholders
+- [ ] If OOTB rules are approved — document which ones and who enabled them
+- [ ] Flag detection engineering gap to account manager if unresolved
+- [ ] Begin DNS data source KB doc for team
+
+---
+
+## Key KQL Reference (Quick Use Tomorrow)
+
+```kusto
+// Is data flowing and how much?
+_Im_Dns()
+| summarize Count=count(), Last=max(TimeGenerated) by bin(TimeGenerated,1d)
+| order by TimeGenerated asc
+
+// Where is it coming from?
+_Im_Dns()
+| summarize Count=count() by _ResourceId, Computer
+
+// What does the data look like?
+_Im_Dns()
+| project TimeGenerated, SrcIpAddr, DnsQuery, DnsResponseCode, EventResult
+| take 50
+
+// AzureDiagnostics DNS Proxy check
+AzureDiagnostics
+| where Category == "AzureFirewallDnsProxy"
+| summarize count() by Resource, Category
+```
+
+---
+
+## Standing Process Note
+
+*Any future request to onboard a new data source must go through intake before work begins.
+Intake requires: source architecture, coverage scope, data owner contact, detection ownership RACI,
+and confirmation of ingestion pipeline before validation work starts.*
+
+When you're ready to move into the KB document I'll be here. Once you say go we'll build it section by section the way you described — preview, scenario and metaphor, definitions, then the structured breakdown.
+
+So to start I will need to truly understand these items. Remember I am new to this. Here are some things on my mind that will help you help me. I understand that ASIM is a standard which has specific schema it follows. The charm of this is that then there are a bunch of precanned detections available and as long as the data is in the right schema and parsed properly then it can be used. I understand that sentinel comes with a bunch of parsers ready to go and when you run a function like _Im_Dns() it has a bunch of kql inside it that targets specific tables that it knows will have dns logs I guess and then has premade parsers that then pars the data at query time and present it on screen consolidating all of it. Am I right so far here? If yes I will continue talking
+10:01 PM
+
+Yes, you are exactly right. Let me confirm each piece so you can build on it with confidence.
+
+ASIM is a normalization standard. It defines a schema — meaning a specific set of field names, data types, and expected values — so that the same kind of event always looks the same regardless of where it came from. A DNS query from an Azure Firewall and a DNS query from an Infoblox appliance are completely different raw log formats, but after ASIM normalization they both have DnsQuery, SrcIpAddr, DnsResponseCode, and so on in the same fields.
+
+The payoff you identified is correct. Because the schema is consistent, a detection rule written against ASIM fields works against any source that has been normalized to that schema. You write it once, it covers everything.
+
+Your understanding of _Im_Dns() is accurate. That function is called a unifying parser. When you run it, it is executing KQL under the hood that queries multiple underlying tables it knows might contain DNS data, runs source-specific filtering parsers against each one to normalize the raw fields into the ASIM schema, unions all those results together, and returns them to you as a single clean dataset. You never have to know which table the data came from or what the raw field names were.
+
+The "query time" piece you mentioned is important. The data is not transformed when it lands. It arrives raw and sits raw in the table. The parsing happens at the moment you run the query. This is called query-time normalization and it means the original data is always preserved underneath.
+
+So yes — keep going. You are building this correctly.
+
+ok, so when I run that though it does show me logs and its parsed and looks nice. What I dont like is its not completely clear as to what table it got the data from. Why is that and is there a way to then track it to the table? I found it on my own but it was a pain. I also know I can check the logic of the function too so I know thats possible but I wish I could make it out or maybe use the data found inside to then track it back to a table. Also how would I ever know ahead of time if an ASIM parser is available for a specific data source. Lets say the client tells me they will be enabling dns proxy on the azure firewall and want me to tell them if a asim parser is there? how do I know what functions are available and what they do? its nice that I have AI but how the heck did people know all this before AI? Additionally, you mentioned that we want logs from the resolver right? how do I know when I look at the logs to verify if they are the logs I am looking for? is there an identifyer? what do you call these types of logs? I have more questions but this is a good place to start
+10:06 PM
+
+These are exactly the right questions. Let me take them one at a time.
+Why Doesn't _Im_Dns() Tell You the Source Table?
+
+Because the unifying parser's job is specifically to hide that complexity from you. It unions multiple sources and presents one clean result. The source table gets abstracted away by design. That is the feature — but it is also the frustration when you need to trace something back.
+
+How to find the source table yourself:
+
+The best field to look at is _ResourceId combined with DeviceVendor and DeviceProduct. These fields survive the normalization and tell you what generated the event. From there you can reason backwards to the table.
+
+But the cleaner way is this:
+kusto
+
+_Im_Dns()
+| summarize count() by DeviceVendor, DeviceProduct, _ResourceId
+
+Once you know the vendor and resource, you know the table. Azure Firewall DNS proxy always lands in AzureDiagnostics. A Windows DNS server via the DNS connector lands in DnsEvents. Private DNS Resolver lands in DNSQueryLogs. There is a mental map you build over time between source and table.
+
+The more surgical approach is to look at the unifying parser's definition itself. In Sentinel go to Logs, then in the function browser find _Im_Dns and open its definition. You will see every table it queries and every sub-parser it calls. That is your map.
+
+You can also run each underlying table directly side by side with _Im_Dns() results and match on timestamp and query name to confirm which record came from where. Tedious but definitive.
+How Do You Know If an ASIM Parser Exists for a Data Source?
+
+Two authoritative places to check:
+
+First — Microsoft's official ASIM documentation. The docs maintain a parser list organized by schema. The DNS schema page lists every source that has a supported parser, what table it uses, and what the parser function name is. The URL to bookmark is:
+
+https://aka.ms/AzSentinelDNSNormalizationDocs
+
+Second — directly in your Sentinel workspace. Run this:
+kusto
+
+// List all ASIM parsers deployed in the workspace
+union withsource=TableName *
+| where TableName startswith "_Im_" or TableName startswith "im"
+
+Actually the cleaner way is in the Logs editor — go to the Functions section in the left schema browser and filter by Im_. Everything prefixed with _Im_ is a unifying parser. Everything prefixed with _ASim_ is a source-specific filtering parser. If you see _ASim_Dns_AzureFirewall for example, that tells you there is a specific parser for Azure Firewall DNS data feeding into the unified DNS schema.
+
+For your specific scenario — if a client says they are enabling Azure Firewall DNS proxy, you go to the ASIM DNS documentation page, find Azure Firewall in the supported sources table, confirm the parser name, and then verify it exists in the workspace. That is your answer in under five minutes.
+How Did People Know All This Before AI?
+
+Honestly — a combination of painful experience, obsessive documentation reading, and community knowledge sharing. The people who knew this stuff had usually spent hours in the Microsoft docs, hours on GitHub reading the actual parser KQL source code, and hours in Sentinel trial and error. The ASIM parsers are all open source on GitHub at the Microsoft Sentinel repository. People would clone the repo and read the parser definitions directly to understand what tables were being queried.
+
+The community — places like the Microsoft Tech Community blog, GitHub issues, and Twitter/X security circles — also carried a lot of this knowledge informally. Someone would write a blog post like "here is how Azure Firewall DNS proxy logs land in Sentinel and here is the ASIM mapping" and that post would get passed around.
+
+AI compressed years of that into a conversation. But the underlying sources — docs, GitHub, community blogs — are still the ground truth you want to verify against.
+How Do You Know If You're Looking at the Right Logs?
+
+This is a really important question and the answer has a name: DNS resolver logs or more specifically recursive resolver query logs. When security people say "give me DNS logs" this is what they mean 99% of the time.
+
+Here is how you identify them when you're looking at a table:
+
+You are looking at the right logs if you see:
+
+    A source IP address — the client device that made the query
+    A queried domain name — what they asked for
+    A query type — A record, AAAA, MX, TXT, etc.
+    A response code — NOERROR means it resolved, NXDOMAIN means the domain doesn't exist, REFUSED means the resolver blocked it
+    A timestamp
+
+In ASIM those fields are SrcIpAddr, DnsQuery, DnsQueryType, DnsResponseCode, and TimeGenerated.
+
+You are NOT looking at the right logs if you only see:
+
+    Configuration changes to DNS settings
+    Zone transfer events
+    DNS server service start/stop events
+
+Those are DNS server audit logs, not query logs. Useful for different purposes but not what you want for security monitoring.
+
+The quick sanity check query:
+kusto
+
+_Im_Dns()
+| project TimeGenerated, SrcIpAddr, DnsQuery, DnsQueryType, DnsResponseCode, EventResult
+| take 20
+
+If SrcIpAddr is populated with real client IPs and DnsQuery contains real domain names, you are looking at resolver query logs. If those fields are empty or the data looks like administrative events, something is wrong with either the source or the parser mapping.
+
+What these logs are formally called:
+
+The technical term is DNS query logs or DNS resolver logs. In the context of Azure Firewall specifically they come from the DNS proxy feature, which means the firewall is acting as a recursive resolver for your VNet resources. The logs it generates are sometimes called DNS proxy logs in Azure's own documentation. All of these terms refer to the same thing — the record of what a client asked for and what answer they got back.
+
+Ready for your next set of questions whenever you are.
+
+ok all of that was truly great so I want you to use the best pieces of that in the ASIM portion of the documentation. I want this to be informative so dont leave anything to someone knowing. be sure to explain each important piece so it is understood. When you say things like VNet resources be sure to have something like this (cloud networking) or similar to let the reader know exactly what you mean when you say stuff. I also dont know what a proxy is in this scenario so be sure to just be clear about everything. everything you shared here is very useful stuff and will help paint the story. Next thing I am wondering is what a private dns resolver is and why that would be useful to a company. I need a usecase. Also, if they have a bunch of say vms, computers, laptops, would all of this also go through the azure firewall? meaning are we capturing everything? do companies normally choose one option to gather everything? When I'm someone who doesnt know part of the problem for me is knowing all the possibilities and what normal people do along with guiding the client to choose the best option to get the logs in. I need a deeper understanding of the possibilities, what a normal enterprise environment looks like and how to choose the best option. For example, I see they have dns ama or something like that installed as a data connector but they are not using it. When would I suggest they take a different approach and is the approach limited to something we could document to make this easier? I feel like seeing a table with the most common methods, when to choose that path and use case sort of thing.
+10:17 PM
+
+This is exactly the right thing to want to understand before the meeting and before writing the documentation. Let me build this out fully.
+What is a DNS Proxy in This Context?
+
+Normally when a device wants to resolve a domain name it sends a DNS query directly to whatever DNS server it has been configured to use. The device and the DNS server talk directly to each other.
+
+A DNS proxy sits in the middle of that conversation. The device sends its query to the proxy instead of directly to the DNS server. The proxy receives the query, forwards it to the real DNS server on the device's behalf, gets the answer back, and returns it to the device. From the device's perspective nothing feels different. But now the proxy has seen every single query and can log it.
+
+Think of it like a postal worker who intercepts every letter you send, writes down who you sent it to and when, then drops it in the mailbox for you. You don't notice anything different. But now there's a record of everything you tried to send.
+
+In Azure, when you enable DNS proxy on the Azure Firewall, your VNet resources (virtual machines, services, anything running in your Azure cloud network) are configured to send their DNS queries to the firewall instead of directly to Azure's default DNS. The firewall logs every query and response, then forwards the request on to the actual resolver.
+What is Azure Private DNS Resolver?
+
+Azure Private DNS Resolver is a dedicated Microsoft-managed service whose entire job is to handle DNS resolution for your Azure environment. It is not a firewall. It does not filter traffic or protect anything. It purely resolves names and can log what it resolves.
+
+Why would a company use this instead of or alongside Azure Firewall DNS proxy?
+
+Imagine a large enterprise with dozens of Azure environments, multiple regions, and a connection back to their on-premises office network. They have internal domain names that only exist inside the company — things like payroll.internal.corp or db-server-01.eastus.internal. These names don't exist on the public internet. They only resolve inside the company's network.
+
+The problem is that DNS resolution needs to work seamlessly whether a request is coming from an Azure VM, a laptop in the office, or a developer working from home over VPN. Getting all of those different environments to resolve internal names consistently is genuinely complicated.
+
+Private DNS Resolver solves this by acting as a central DNS hub that knows how to handle both internal company names and public internet names, and can forward queries between on-premises DNS servers and Azure DNS in a controlled way.
+
+The security logging benefit is that because everything flows through the resolver, you get a complete picture of DNS queries across your Azure environment in one place.
+
+Simple analogy: Azure Firewall DNS proxy is like a security guard at the door who also happens to write down everyone who comes and goes. Private DNS Resolver is like a dedicated receptionist whose entire job is managing who goes where in the building and keeping the visitor log. Two different jobs. One happens to produce a visitor log as a side effect. The other was built specifically to manage traffic and the log is a deliberate feature.
+Are All Devices Covered? VMs, Laptops, Computers?
+
+This is the most important coverage question and the answer is: it depends entirely on how the environment is architected, and you cannot assume everything is covered.
+
+Here is the reality of what a typical enterprise environment looks like and what gets captured:
+
+Azure VMs and cloud workloads — If the VNet (the private cloud network those VMs live in) is configured to use either the Azure Firewall DNS proxy or Private DNS Resolver as its DNS server, those VMs are covered. If the VNet is using Azure's default DNS directly, they are not covered.
+
+On-premises computers and servers — These are physical or virtual machines sitting in a company's own data center or office. They almost certainly have their own DNS infrastructure, typically Windows Server DNS. Their queries never touch Azure Firewall or Private DNS Resolver unless the company has explicitly set up DNS forwarding from on-premises to Azure. Most companies have not done this. This is a major gap.
+
+Laptops and remote workers — These depend on how VPN is configured. If a remote worker connects via VPN and that VPN routes DNS through the corporate DNS server, those queries may or may not make it to Azure logging depending on what that corporate DNS server does with them. If the laptop is using the DNS server assigned by the local coffee shop Wi-Fi, those queries are completely invisible to the company.
+
+The bottom line is that no single DNS logging method captures everything by default. Coverage is a deliberate architectural choice and most environments have gaps they don't know about.
+The Common DNS Logging Methods — When to Use What
+
+Here is the table you asked for. This covers the most common approaches you will encounter in enterprise environments.
+Method	What It Is	What Gets Captured	Best For	Limitations
+Azure Firewall DNS Proxy	Firewall acts as DNS middleman for Azure VNets	Queries from Azure VNet resources routed through the firewall	Orgs already using Azure Firewall who want DNS visibility without adding new infrastructure	Only covers VNets configured to use the firewall as DNS. On-prem and laptops not covered
+Azure Private DNS Resolver	Dedicated Azure DNS service with logging	Queries from Azure resources routed through the resolver, including hybrid on-prem forwarding if configured	Orgs with complex hybrid environments needing consistent DNS across cloud and on-prem	Requires architectural setup. Logging goes to DNSQueryLogs table, newer and less mature in some areas
+Windows DNS Server with AMA	Agent installed on Windows DNS servers sends logs to Sentinel	Every query handled by that Windows DNS server	Orgs with on-premises Windows DNS infrastructure they want to monitor	Only covers devices using that specific Windows DNS server. Requires agent deployment and maintenance
+DNS AMA Data Connector	The Microsoft agent-based connector for DNS server logs	Query logs from Windows DNS servers where the agent is installed	Extending coverage to on-prem Windows DNS	Same as above. Agent must be deployed to every DNS server you want to monitor
+Third Party DNS (Infoblox, Cisco Umbrella, etc.)	Dedicated DNS appliances or cloud DNS services with their own logging	Varies by product but typically full query logs with rich metadata	Enterprises with existing DNS appliances or cloud-delivered DNS security	Each product needs its own connector or custom ingestion pipeline. ASIM parser availability varies
+Network Tap / Packet Capture	Capturing raw DNS traffic off the wire	Everything on that network segment regardless of DNS server configuration	High security environments needing complete visibility	Very high volume, complex to maintain, typically not done in Sentinel directly
+The DNS AMA Connector You Saw — When Would You Suggest It?
+
+The DNS AMA connector (AMA stands for Azure Monitor Agent) is specifically for collecting logs from Windows Server DNS. You install the agent on the Windows servers that are acting as DNS servers in the environment, and those logs flow into Sentinel.
+
+You would suggest this when:
+
+    The client has on-premises Windows DNS servers handling queries for physical machines, office laptops, or servers in their data center
+    Azure Firewall or Private DNS Resolver only covers the cloud portion and you have identified an on-prem gap
+    The client has domain-joined machines and Active Directory, which almost always means Windows DNS is in play somewhere
+    The client specifically needs to see DNS queries from endpoints that never touch Azure infrastructure
+
+You would not suggest this when:
+
+    The environment is fully cloud-native with no on-premises Windows DNS
+    The client has a third-party DNS solution already
+    The operational overhead of deploying and maintaining agents across DNS servers is not feasible
+
+The key insight for your conversations: In a typical enterprise you will almost never have one method that covers everything. The mature answer is usually Azure Firewall DNS proxy or Private DNS Resolver for cloud workloads plus Windows DNS AMA for on-premises infrastructure. That combination covers the two most common gaps.
+What Does a Normal Enterprise DNS Environment Actually Look Like?
+
+Here is a realistic picture of what you will encounter most often:
+
+A mid-to-large enterprise typically has Windows Active Directory on-premises. Active Directory depends heavily on DNS — it uses DNS to locate domain controllers, authenticate users, and route internal traffic. This means there are almost always Windows DNS servers on-premises that have been running for years, sometimes decades, handling queries for every domain-joined machine in the building.
+
+When that company moves workloads to Azure, they set up VNets and Azure resources. Early on they often just use Azure's default DNS for cloud resources because it's easy. Over time they realize their cloud resources need to resolve internal names, so they start configuring DNS more deliberately. This is usually where Azure Firewall DNS proxy or Private DNS Resolver enters the picture.
+
+The result is that most enterprises you encounter will have at least two DNS environments — one on-prem (Windows DNS) and one in Azure — and they may or may not be forwarding between them. The DNS logging in Sentinel may only be capturing one of those two environments. The client may not even realize this.
+
+Your job as the engineer is to ask the question and draw the map. During the meeting tomorrow, a simple whiteboard question like "walk me through where your DNS servers are and what devices point to each one" will reveal the full picture faster than any technical investigation.
+The Decision Framework for Recommending a DNS Logging Approach
+
+When a client says they want DNS logs, here is the thinking process to walk through:
+
+First — map the environment. Where are the DNS servers? Cloud only, on-prem only, or hybrid? What devices point to what DNS servers?
+
+Second — identify what they actually want to monitor. Cloud workloads only? On-prem endpoints? Everything? The answer determines which methods you need.
+
+Third — check what infrastructure already exists. Do they have Azure Firewall already? Then DNS proxy is low friction. Do they have Windows DNS on-prem? Then AMA is the path. Are they starting fresh? Then Private DNS Resolver is worth considering.
+
+Fourth — think about coverage gaps explicitly. Document what is covered and what is not. Never let a client assume they have complete coverage when they don't. This protects you and helps them make informed decisions.
+
+Fifth — match to ASIM parser availability. Once you know the source, verify whether an ASIM parser exists for it. If it does, you get normalized data and OOTB detection compatibility. If it doesn't, you are in custom territory and the client needs to know that.
+
+That gives you the full picture. When you are ready I will carry all of this into the documentation with the writing structure you described — scenario and metaphor first, definitions loaded in, then the structured breakdown. Everything we have covered in this conversation is the content that goes in.
+
+this is all very good. I still want to lock some of these ideas in but will do that after my investigation and then we can make a great guidance file. Please provide me raw markdown file for my investigation that we discussed. not the KB though. We will make that after
+10:29 PM
+Viewed a file, created a file, read a file
+
+That's your investigation reference. Here is what it covers so you know how to use it tomorrow:
+
+Work top to bottom. Steps 1 through 5 are all KQL you run directly in Sentinel Logs. Each one has a fill-in findings table underneath it so you are documenting as you go. Steps 6 and 7 are portal clicks, not queries.
+
+The summary section in the middle is what you complete after running everything. That becomes your talking points walking into the room — you are not discovering things live in front of the client, you already know the answers and you are confirming and filling gaps.
+
+The bottom half is your meeting guide — the coverage map table you fill in with the client, the questions organized by topic, and the explicit section on what you are and are not committing to. That last part is important to have written down so it doesn't feel like you're making it up on the spot.
+
+When you get back from the meeting and have your findings, come back and we will build the KB.
+Dns investigation prep
+Document · MD
+
+I just ran the summary on _Im_Dns() what is this telling me exaclty? I just see a list of total events?
+10:37 PM
+
+Right — that query was giving you a day by day breakdown of how many DNS log events are coming in. Each row is one day, with a count of how many records landed on that day.
+
+What you are looking for when you read it is:
+
+Is data actually flowing? If you got rows back at all, yes — DNS logs are making it into Sentinel. That is your first confirmation.
+
+When did it start? The earliest date in the FirstSeen or TimeGenerated column tells you when logs first appeared. This matters because you want to know if this is brand new or has been running for a while without anyone noticing.
+
+Is it consistent? Look at the TotalEvents number across the rows. If every day shows a similar number, ingestion is healthy and stable. If you see some days with thousands of events and other days with zero, that is a gap worth flagging — it could mean logging was misconfigured, a firewall was down, or someone changed a setting.
+
+Is it recent? Check that the LastSeen date is today or yesterday. If the most recent data is weeks old, logging stopped at some point and nobody caught it.
+
+So practically speaking — paste what you are seeing here and tell me:
+
+    How many rows did you get back?
+    What is the earliest date?
+    What is the most recent date?
+    Do the daily counts look roughly consistent or all over the place?
+
+That will tell us together what the data is saying and whether anything needs to be flagged before tomorrow.
+
+yea but it doesnt tell me what this parser is looking for though? So you are sure that this one knows somehow all the tables that could have dns logs? I wish I could then see what types its collecting or something like that
+10:38 PM
+
+Great instinct — and you are right to want to see under the hood. Let me address both things.
+How Does _Im_Dns() Know Which Tables to Look In?
+
+It does not magically discover tables. It was hardcoded by Microsoft when they wrote the parser. A team at Microsoft looked at every data source that could produce DNS logs, wrote individual filtering parsers for each one, and then wrote the unifying parser to call all of them. So it only knows about sources Microsoft has explicitly built support for. If a client has a DNS source that Microsoft has never written a parser for, _Im_Dns() will never see that data.
+
+This is important because it means the parser is only as complete as Microsoft's list of supported sources. New data sources get added over time but there is always a lag.
+How to See What It Is Actually Looking At
+
+You can read the function definition directly. Run this in your Sentinel logs:
+kusto
+
+// This shows you the full KQL logic inside _Im_Dns()
+_Im_Dns
+
+Just the function name with no parentheses and no pipe. Sentinel will show you the source code of the parser. You will see it calling a list of sub-parsers like:
+
+    _ASim_Dns_AzureFirewall
+    _ASim_Dns_MicrosoftNXlog
+    _ASim_Dns_InfobloxBloxOne
+    etc.
+
+Each one of those is a source-specific parser targeting a specific table.
+To See Which of Those Sub-Parsers Actually Has Data Right Now
+
+This is the query you actually want:
+kusto
+
+_Im_Dns()
+| summarize Count = count() by EventProduct, EventVendor, DeviceVendor, DeviceProduct
+| order by Count desc
+
+This will tell you not just that data exists but what type of DNS source it came from. Each row represents a different source type that contributed records. If you only get one row back, you have one source. If you get multiple rows, multiple sources are feeding the parser.
+The Even More Surgical Approach
+
+If you want to trace a specific record all the way back to its raw table, do this:
+kusto
+
+_Im_Dns()
+| take 1
+| project TimeGenerated, SrcIpAddr, DnsQuery, _ResourceId, EventProduct, EventVendor
+
+Grab the _ResourceId value from that result. Then run:
+kusto
+
+AzureDiagnostics
+| where _ResourceId == "paste the resource id here"
+| where TimeGenerated between (datetime(paste timestamp minus 1 min) .. datetime(paste timestamp plus 1 min))
+| take 5
+
+If records come back, you just confirmed that AzureDiagnostics is the raw table behind that parsed record. That is as deep as you can go — you found the original untouched log.
+
+Run that EventProduct / EventVendor summary query and paste what comes back. That will tell us exactly what type of DNS logging this client has active and we will know precisely what we are working with before the meeting.
+
+yea add these to the document. This is all good sutff
+10:39 PM
+
+Got it. Let me update the file now.
+Edited 2 files, viewed a file, read a file
+
+Updated. Here is what changed and why it matters for you practically:
+
+Step 1a is now its own section sitting between the volume check and the source identification. The reason it is separate is that these are conceptually different questions — Step 1 answers "is data flowing," Step 1a answers "what is the parser actually doing and where is it getting data from." Those are two different things and you want to think about them separately.
+
+The section now has four distinct sub-steps inside it. Reading the parser source so you can see the full list of sub-parsers it calls. The EventProduct / EventVendor query so you can see which of those sources actually have data. The surgical trace-back query so you can connect a parsed record to its raw table. And the two methods for checking ASIM parser availability for any future source a client mentions.
+
+The checklist at the top was also updated to include Step 1a so your working order is clear when you sit down to run through it tomorrow.
+Dns investigation prep
+Document · MD
+
+I think its prob also worth talking about the different ASIM dns functions that I should know. From what you are saying here, the _Im_Dns function does a union of everything it finds related to DNS? Is this what we would use for detections too or is it important to use the individual one? if individual then why?
+10:42 PM
+
+Great question and this is genuinely important to understand before writing detections or validating anything.
+The Three Levels of ASIM DNS Functions
+
+There are three tiers and they serve different purposes.
+
+Tier 1 — The Unifying Parser: _Im_Dns()
+
+This is the one you have been using. It calls every source-specific parser underneath it, unions all the results, and returns everything in one normalized dataset. The Im stands for intermediary — it is the middle layer that brings everything together.
+
+Use this when you want a complete picture across all DNS sources in the environment. Most OOTB detections in Sentinel are written against this function precisely because it covers everything regardless of what the underlying source is.
+
+Tier 2 — The Filtering Parsers: _ASim_Dns_[SourceName]()
+
+These are source-specific. Each one targets exactly one data source. Examples:
+
+    _ASim_Dns_AzureFirewall() — only Azure Firewall DNS proxy logs
+    _ASim_Dns_MicrosoftNXlog() — only Windows DNS via NXLog agent
+    _ASim_Dns_InfobloxBloxOne() — only Infoblox
+
+The ASim prefix means Advanced Security Information Model — these are the individual building blocks that _Im_Dns() calls internally.
+
+Tier 3 — The Raw Tables
+
+Not functions at all — just the underlying tables like AzureDiagnostics, DNSQueryLogs, DnsEvents. Raw, unparsed, source-specific. You go here when you need to see exactly what landed, verify parser mappings, or troubleshoot.
+Should Detections Use _Im_Dns() or the Individual Parsers?
+
+The answer depends on what the detection is trying to do and this is an important engineering decision.
+
+Use _Im_Dns() for detections when:
+
+You want the detection to work regardless of what DNS source the environment uses. This is the whole point of ASIM. If a client swaps from Azure Firewall DNS proxy to Private DNS Resolver six months from now, a detection written against _Im_Dns() keeps working without any changes. You write it once, it covers everything. This is the right default for most detections.
+
+Use the individual _ASim_Dns_[Source]() parser when:
+
+    You need to detect something that only exists in one specific source — a field that Azure Firewall logs but no other source does
+    You are troubleshooting whether a detection is firing correctly and want to isolate one source to eliminate variables
+    Performance matters — querying one source-specific parser is faster than querying the unifying parser across all sources, which matters at scale in large environments
+    You know with certainty the environment only has one DNS source and want the query to be explicit and lean
+
+The practical reality for your work:
+
+For OOTB Sentinel analytics rules, Microsoft writes them against _Im_Dns(). Those rules work as long as the ASIM parser is correctly mapping the data. Your job as the engineer validating a new DNS source is to confirm that _Im_Dns() is returning good normalized data — because if it is, all those OOTB rules automatically have coverage.
+
+If the parser is broken or a field is not mapping correctly, the OOTB rule will either not fire or produce garbage results. That is why your data quality check in Step 5 matters so much — you are essentially validating that the ASIM layer is working correctly so detections can trust it.
+The Functions You Should Know By Name
+Function	What It Is	When to Use It
+_Im_Dns()	Unifying parser — all sources, normalized	Default for detections and investigation
+_Im_Dns(starttime=, endtime=)	Same but with time parameters for performance	When running against large time ranges
+_ASim_Dns_AzureFirewall()	Azure Firewall DNS proxy only	Troubleshooting, source isolation, Azure-only environments
+_ASim_Dns_MicrosoftNXlog()	Windows DNS via NXLog	On-prem Windows DNS troubleshooting
+_ASim_Dns_Native()	Microsoft's native DNS table (DNSQueryLogs)	Private DNS Resolver environments
+imDns()	Older version of the unifying parser — no underscore prefix	Legacy — you may see this in older rules, prefer _Im_Dns()
+
+The difference between imDns() and _Im_Dns() is worth knowing. The underscore prefix version is the newer built-in workspace function that Microsoft deploys automatically. The non-underscore version is the older community-deployed parser that had to be manually installed. If you see both in a workspace it usually means the workspace has been around for a while and the old parser was never cleaned up. Always prefer the underscore version.
+One More Thing Worth Knowing — Parameters
+
+_Im_Dns() accepts parameters that let you filter before the union happens, which is much more efficient than filtering after. The most useful ones:
+kusto
+
+// Only return failed queries — NXDOMAIN, REFUSED etc.
+_Im_Dns(eventresult='Failure')
+
+// Only return queries for a specific domain
+_Im_Dns(domain_has_any=dynamic(['suspicious-domain.com']))
+
+// Limit the time window at the parser level for performance
+_Im_Dns(starttime=ago(1h), endtime=now())
+
+Filtering inside the function call is faster than piping and then filtering because the filtering happens before the union across all sources rather than after. In a production detection rule this difference matters.
+
+Add all of this to the document wherever you think it fits — I would put it as a new section right after Step 1a, something like "ASIM DNS Function Reference" so it is there to consult any time you are writing a query or validating a source. Ready to update the file when you say so.
+
+so this would not work _ASim_Dns_AzureDiagnostics()?
+10:43 PM
+
+Correct — that function does not exist and would throw an error.
+
+This is a really important thing to lock in your head because the naming trips people up constantly.
+Why It Is _ASim_Dns_AzureFirewall and Not _ASim_Dns_AzureDiagnostics
+
+AzureDiagnostics is just a container table. It is a generic bucket that Microsoft uses to collect diagnostic logs from dozens of completely different Azure services — firewalls, key vaults, SQL databases, load balancers, and more. It has no identity of its own. It is just where stuff lands.
+
+Azure Firewall is the actual product that generated the DNS log.
+
+So when Microsoft named the parser they named it after the product that created the data, not the table it happened to land in. The parser is _ASim_Dns_AzureFirewall() because the log came from an Azure Firewall. The fact that it landed in AzureDiagnostics is just a storage detail — a plumbing concern. The parser handles that internally. It knows to look inside AzureDiagnostics and filter for Category == "AzureFirewallDnsProxy" so you never have to think about it.
+The Mental Model to Carry Forward
+
+Always think in terms of product not table.
+
+When you are looking for a parser name, ask yourself:
+
+    What product or service generated this log?
+
+Not:
+
+    What table did it land in?
+
+The parser name will almost always follow the product name. A few examples to make this stick:
+Product That Generated the Log	Table It Lands In	Parser Name
+Azure Firewall	AzureDiagnostics	_ASim_Dns_AzureFirewall()
+Azure Private DNS Resolver	DNSQueryLogs	_ASim_Dns_Native()
+Windows DNS Server	DnsEvents	_ASim_Dns_MicrosoftNXlog() or _ASim_Dns_MicrosoftOMS()
+Infoblox BloxOne	CommonSecurityLog	_ASim_Dns_InfobloxBloxOne()
+
+Notice that AzureDiagnostics appears as the landing table for Azure Firewall but the parser is named after the firewall. And CommonSecurityLog is another generic container table — same idea — Infoblox data lands there but the parser is named after Infoblox.
+
+This is also exactly why the trace-back exercise in Step 1a matters. When you go from a parsed _Im_Dns() result back to the raw table, you are peeling back that abstraction and seeing the container. Going the other direction — from table name to parser name — requires you to know what product put data in that table. That knowledge is what you are building right now.
+
+Want me to add this to the document as a callout box or note inside the ASIM function reference section?
+
+you make a good point here. a table is more like a container. Is there an identifier that tells us if a table is a "container" meaning it is designed and often does collect multiple sources? if yes how, this would be very useful when documenting an environment. Ideally I would have access to something by microsoft that would outline everything these containers can and often ingest.
+10:46 PM
+
+Really good engineering instinct. Yes there are identifiers and patterns that tell you a table is a container, and Microsoft does document what goes into them. Let me break this down properly.
+How to Identify a Container Table
+
+There is no single official label Microsoft applies that says "this is a container table." But there are clear signals you learn to recognize.
+
+Signal 1 — A Category or Type column exists at the top level
+
+Container tables almost always have a field whose entire job is to tell you what kind of log this row contains. In AzureDiagnostics that field is Category. In CommonSecurityLog it is DeviceVendor and DeviceProduct. In Event it is EventLog and EventID. If you look at a table and the first thing you need to do to make sense of it is filter by some category or type field, it is almost certainly a container.
+
+Signal 2 — The table name is generic
+
+Tables named after a specific product are almost never containers. Tables with broad, generic names almost always are. Compare:
+
+    SigninLogs — specific, one source, Azure AD sign-ins only
+    AzureDiagnostics — generic, massive container
+    SecurityEvent — generic, Windows security events from many machines
+    CommonSecurityLog — generic, CEF format logs from hundreds of vendors
+
+Signal 3 — Columns are inconsistently populated
+
+Container tables often have dozens of columns but any given row only has a handful populated. This is because different sources use different fields and the table has to accommodate all of them. If you look at a table and see that most rows have large numbers of empty columns, you are looking at a container.
+
+Run this to see it clearly on any table:
+kusto
+
+AzureDiagnostics
+| take 100
+| summarize by Category
+
+The number of distinct categories that come back tells you immediately how many different services are dumping into that table.
+The Main Container Tables You Will Encounter in Sentinel
+Table	What It Collects	Key Identifier Field
+AzureDiagnostics	Diagnostic logs from almost any Azure service — firewalls, databases, key vaults, etc.	Category, ResourceType
+CommonSecurityLog	CEF format logs from hundreds of third party security products — firewalls, proxies, SIEM forwarders	DeviceVendor, DeviceProduct
+SecurityEvent	Windows Security event logs from any Windows machine reporting to Sentinel	EventID, Computer
+Event	Windows System and Application event logs	EventLog, EventID, Computer
+Syslog	Syslog format logs from any Linux machine or network device	Facility, SeverityLevel, ProcessName
+WindowsEvent	Newer version of SecurityEvent using raw XML — same concept	EventID, Channel
+DeviceNetworkEvents	Network events from Microsoft Defender for Endpoint across all enrolled devices	DeviceName, ActionType
+The Purpose-Built Tables — What Not-Containers Look Like
+
+For contrast, these are tables designed for exactly one source. They are never containers:
+Table	Exactly One Source
+SigninLogs	Azure AD interactive sign-ins
+AuditLogs	Azure AD audit events
+DNSQueryLogs	Azure Private DNS Resolver only
+OfficeActivity	Microsoft 365 activity only
+McasShadowItReporting	Microsoft Defender for Cloud Apps only
+
+With these tables you do not need a category filter. Every row is the same type of event from the same source.
+Microsoft's Official Documentation for Each Container
+
+This is exactly what you asked for and these are the pages to bookmark.
+
+AzureDiagnostics — the biggest one: https://learn.microsoft.com/en-us/azure/azure-monitor/reference/tables/azurediagnostics
+
+This page lists every Azure service that writes to this table, what Category value each service uses, and which fields each service populates. This is your map for AzureDiagnostics. When a client says they enabled logging on any Azure service, this page tells you what category to filter for.
+
+CommonSecurityLog: https://learn.microsoft.com/en-us/azure/sentinel/cef-syslog-ama-overview
+
+This covers the CEF format and which vendors use it. The individual vendor documentation then tells you what DeviceVendor and DeviceProduct strings to expect.
+
+SecurityEvent — Windows Event IDs: https://learn.microsoft.com/en-us/windows/security/threat-protection/auditing/security-auditing-overview
+
+Microsoft's full Windows Security auditing reference. Every EventID, what it means, and when it fires.
+
+Azure Monitor Table Reference — the master list: https://learn.microsoft.com/en-us/azure/azure-monitor/reference/tables/tables-category
+
+This is the one to save above all others. It is Microsoft's complete reference for every table in Azure Monitor and Log Analytics — which is the underlying engine Sentinel sits on top of. Every table is listed, categorized, and linked to its own reference page showing every field. This tells you whether a table is purpose-built or a container and what goes into it.
+A Practical Query to Document a Container Table in Any Environment
+
+When you are documenting a client environment and you want to know exactly what is flowing into a container table, run this:
+kusto
+
+// For AzureDiagnostics — show everything flowing in and from where
+AzureDiagnostics
+| summarize
+    Count = count(),
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated)
+    by Category, ResourceType, Resource
+| order by Count desc
+
+kusto
+
+// For CommonSecurityLog — show all vendors and products
+CommonSecurityLog
+| summarize
+    Count = count(),
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated)
+    by DeviceVendor, DeviceProduct
+| order by Count desc
+
+kusto
+
+// For SecurityEvent — show all machines and event types
+SecurityEvent
+| summarize
+    Count = count(),
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated)
+    by Computer, EventID
+| order by Count desc
+
+These three queries give you a complete inventory of what is inside each major container. Run them on a new client workspace and you immediately know what is flowing and from where. This is genuinely useful for your environment documentation process.
+The Bigger Idea for Your KB and Client Documentation
+
+This concept — container tables versus purpose-built tables — is worth making a standalone section in your KB. When someone new joins your team and looks at a Sentinel workspace for the first time, understanding this distinction changes how they read everything. They stop asking "what is in AzureDiagnostics" and start asking "what categories are flowing into AzureDiagnostics" — which is the right question.
+
+Want me to add this whole concept to the investigation document as a reference section, and flag it for inclusion in the KB when we build that?
+
+for a table like azurediagnostics. can the fields ever change? for example when I run a summary of category, I see 10 catagorys and they all have logs. Can I assume that these are all the catagories that this table is capable of collecting? or are there more and they are not showing up because no data? I would like to know if there is a way to see everything each table is capable of. Additionally it would be great to have a formulat to investigate all the tables for identifiers that would tell me if its a container or a single source type.
+10:53 PM
+
+Really good engineering question and the answer has important implications for how you document environments.
+Can the Fields and Categories in AzureDiagnostics Change?
+
+Yes — and this is one of the most important things to understand about container tables.
+
+AzureDiagnostics is dynamically schematized. This means the columns in the table are not fixed. When a new Azure service starts writing to it that uses a field no previous service has ever used, Azure Monitor adds that column to the table automatically. The table literally grows new columns as new sources onboard.
+
+The practical implications of this are significant:
+
+What you see is only what has been sent. If you run a summary of categories and see 10, those are the 10 services that have actually sent logs to that workspace. There could be 50 more categories that this table is capable of collecting that simply have no data in this environment yet. Your 10 categories tell you what is active, not what is possible.
+
+Fields can be empty for entire categories. A column might exist in the table because one service uses it, but every row from a different service will have that column blank. This is why AzureDiagnostics looks so sparse when you browse it.
+
+The schema you see today could be different tomorrow. If the client enables a new Azure service that logs to AzureDiagnostics, new categories and potentially new columns appear automatically with no action required on your part.
+How to See Everything a Table Is Capable Of
+
+There are two distinct questions here and they have different answers.
+
+Question 1 — What categories/sources is this table theoretically capable of collecting?
+
+This answer lives in Microsoft's documentation, not in the data. The table in your workspace only shows you what has been configured and sent. For the full list of every possible category:
+
+https://learn.microsoft.com/en-us/azure/azure-monitor/reference/tables/azurediagnostics
+
+That page lists every Azure service that can write to this table and what Category value it uses. This is your authoritative reference for what is possible versus what is active.
+
+Question 2 — What fields does this table have and what are their definitions?
+
+Same documentation page. Every column is listed with its data type and description. But remember — many columns will only be populated by specific sources.
+
+You can also query the schema directly in the workspace:
+kusto
+
+// See every column that currently exists in AzureDiagnostics
+// and what data type it is
+AzureDiagnostics
+| getschema
+
+This returns every column the table currently has based on what has been sent to this workspace. Compare this against the documentation page and the difference tells you what columns exist in theory but have never been populated here.
+The Formula to Investigate All Tables and Identify Container vs Single Source
+
+This is the really useful part. Here is a systematic approach you can run on any new workspace to build an instant picture of what you are working with.
+
+Step 1 — Get all tables that have data in the workspace
+kusto
+
+// List every table with data, volume, and time range
+union withsource=TableName *
+| summarize
+    Count = count(),
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated),
+    ColumnCount = dcount(TableName)
+    by TableName
+| order by Count desc
+
+Step 2 — For each table, check if it has a category-style identifier column
+kusto
+
+// Check AzureDiagnostics for distinct categories
+AzureDiagnostics
+| summarize Count=count(), FirstSeen=min(TimeGenerated), LastSeen=max(TimeGenerated) by Category, ResourceType
+| order by Count desc
+
+kusto
+
+// Check CommonSecurityLog for distinct vendors
+CommonSecurityLog
+| summarize Count=count(), FirstSeen=min(TimeGenerated), LastSeen=max(TimeGenerated) by DeviceVendor, DeviceProduct
+| order by Count desc
+
+kusto
+
+// Check SecurityEvent for distinct event types and machines
+SecurityEvent
+| summarize Count=count(), FirstSeen=min(TimeGenerated), LastSeen=max(TimeGenerated) by EventID, Computer
+| order by Count desc
+
+kusto
+
+// Check Syslog for distinct sources
+Syslog
+| summarize Count=count(), FirstSeen=min(TimeGenerated), LastSeen=max(TimeGenerated) by Facility, ProcessName, Computer
+| order by Count desc
+
+kusto
+
+// Check Event table
+Event
+| summarize Count=count(), FirstSeen=min(TimeGenerated), LastSeen=max(TimeGenerated) by EventLog, EventID, Computer
+| order by Count desc
+
+Step 3 — The container vs single source test
+
+Run this on any unfamiliar table. If the distinct count on the identifier column is greater than 1, you are looking at a container:
+kusto
+
+// Generic container test -- works on any table
+// Replace TABLE_NAME and IDENTIFIER_COLUMN with your target
+TABLE_NAME
+| summarize
+    TotalRows = count(),
+    DistinctSources = dcount(IDENTIFIER_COLUMN),
+    Sources = make_set(IDENTIFIER_COLUMN, 50)
+| extend IsLikelyContainer = iff(DistinctSources > 1, "YES - multiple sources detected", "Single source or check another column")
+
+Step 4 — Check column population density to confirm container behavior
+
+A container table will have many columns with low population rates. A single source table will have most columns consistently populated.
+kusto
+
+// Run on any table to see how populated each column is
+// This reveals container behavior -- lots of sparse columns = container
+AzureDiagnostics
+| take 1000
+| summarize by *
+| evaluate pivot()
+
+A simpler version that is more readable:
+kusto
+
+// Check population rate of every column in AzureDiagnostics
+let TableSample = AzureDiagnostics | take 1000;
+let TotalRows = toscalar(TableSample | count);
+TableSample
+| summarize
+    PopulatedRows = countif(isnotempty(tostring(pack_all())))
+    by bin(TimeGenerated, 1d)
+
+Actually the most practical version for real use is this — pick the columns you care about and check them directly:
+kusto
+
+AzureDiagnostics
+| where TimeGenerated > ago(7d)
+| summarize
+    TotalRows = count(),
+    Category_Populated = countif(isnotempty(Category)),
+    ResourceType_Populated = countif(isnotempty(ResourceType)),
+    Resource_Populated = countif(isnotempty(Resource))
+| extend
+    Pct_Category = round(100.0 * Category_Populated / TotalRows, 1),
+    Pct_ResourceType = round(100.0 * ResourceType_Populated / TotalRows, 1)
+
+The Master Reference You Want Bookmarked
+
+For every table in Azure Monitor — not just AzureDiagnostics — this is Microsoft's complete table reference:
+
+https://learn.microsoft.com/en-us/azure/azure-monitor/reference/tables/tables-category
+
+It categorizes every table as one of these types:
+
+    Azure resources — logs from specific Azure services
+    Virtual machines — agent-collected logs from VMs
+    Applications — Application Insights data
+    Container insights — Kubernetes and container logs
+    Security — Microsoft Defender and Sentinel specific tables
+
+When you land on an unfamiliar table name in a client workspace, this reference page tells you exactly what it is, what populates it, every column it has, and whether it is a dedicated table or a shared container. This is the single most useful reference document for understanding any Sentinel workspace from scratch.
+
+Want me to add the container identification queries and the bookmarked references into the investigation document as a standalone reference section?
+
+wow - I feel like this needs a whole kb all its own. hold onto this link https://learn.microsoft.com/en-us/azure/azure-monitor/reference/tables-category - after we get done with dns I want to jump back into this topic together and get some of this logged. - What I need for my team is exactly this: A really difficult problem when managing environments is a good audit and silent log detection strategy. I am working on a process to fix this for our team. It involves a new mode of thinking where we first have a watchlist of all tables available in the workspace, define them, and investigate them. It will be important to have a start to finish generic method for exploring each table to find out if it is a container type (meaning what sources could be logging within it) and what tables are single source. Then we will make a secondary watchlist that then outlines all the specific data sources. So azurediagnostics table may show up 5+ times but the data source will be different. I then want to create functions for each table that has all the functions within it required to output all details and all log sources and verify that everything is logging. This will then be converted into a living workbook that will drive audits that we will do with the client every few months. - log this into memory - when I want to come back to it I will say "ok lets talk data sources" and you can reference this to get back on track.
+11:02 PM
+
+Consider it logged. Here is a clean summary of what you want to build so we are aligned when you come back to it:
+
+Project: Data Source Audit Framework Trigger phrase to resume: "ok lets talk data sources"
+
+Reference link: https://learn.microsoft.com/en-us/azure/azure-monitor/reference/tables/tables-category
+
+The Problem Being Solved: Managing multiple Sentinel environments without a structured audit process means silent logging failures go undetected, coverage gaps are undocumented, and no one has a clear picture of what is actually flowing at any given time.
+
+What We Are Building:
+
+A start to finish repeatable audit framework built in layers:
+
+Layer 1 — Master Table Watchlist Every table present in the workspace. Defined, categorized, and investigated. Includes a method to determine whether each table is a container type or a single source type.
+
+Layer 2 — Data Source Watchlist Every distinct data source mapped out individually. AzureDiagnostics might generate 5+ rows here — one per category/source flowing into it. This is the real inventory of what the environment is collecting.
+
+Layer 3 — Per-Table Investigation Functions Reusable KQL functions for each table that output all relevant details, all log sources within it, volume, freshness, and a health status. Run one function, get a full picture of that table.
+
+Layer 4 — Living Audit Workbook Everything above surfaced in a Sentinel workbook that can be walked through with the client on a recurring basis. Makes the audit a conversation not a fire drill.
+
+The Mode of Thinking: Silent log failure is one of the hardest problems in managed security. A log that stopped flowing three weeks ago looks identical to a log that never existed unless you are actively checking. This framework makes that invisible problem visible and repeatable.
+
+We will pick this up after DNS. Whenever you are ready just say the phrase and I will pull this back up and we will build it out properly.
+
+Was there anything we needed to add to the dns guidance before I begin on the other computer? I want to go through everything we discussed
+11:03 PM
+
+Let me think through everything we covered and check what made it into the document versus what we discussed but did not add yet.
+What Is Already in the Document
+
+    Step 1 — Volume and ingestion confirmation
+    Step 1a — ASIM parser deep dive, reading source code, tracing back to raw table, how to check parser availability
+    Step 2 — Identifying the data source
+    Step 3 — DNSQueryLogs check
+    Step 4 — AzureDiagnostics DNS proxy check
+    Step 5 — Data quality check
+    Step 6 — Connector portal check
+    Step 7 — Analytics rules check
+    Meeting questions, coverage map, RACI boundary, standing process note
+
+What We Discussed That Did NOT Make It In Yet
+
+1. The ASIM DNS Function Reference section
+
+We had a full breakdown of the three tiers — _Im_Dns() as the unifying parser, _ASim_Dns_[Source]() as the filtering parsers, and raw tables as the bottom layer. The table showing all the functions you should know by name. The explanation of imDns() vs _Im_Dns() and why the underscore version is preferred. The parameters like eventresult, domain_has_any, starttime and why filtering inside the function call is more efficient than filtering after. None of this made it into the document yet.
+
+2. The naming convention insight — product not table
+
+The explanation of why _ASim_Dns_AzureFirewall() exists and not _ASim_Dns_AzureDiagnostics(). The mental model of always thinking in terms of the product that generated the log rather than the table it landed in. The reference table showing product, landing table, and parser name side by side. This is genuinely important for anyone new to this and it is not in the document.
+
+3. Container table concept and identification
+
+Everything about container tables versus single source tables. The signals that tell you a table is a container — the category column, generic naming, sparse column population. The specific identifier fields for each major container table. The getschema query. The population density check. The bookmarked Microsoft reference links. The queries to inventory what is flowing into each container. None of this made it in.
+
+4. Detection engineering boundary
+
+We talked about this at length — the three distinct roles of ingestion engineering, detection engineering, and SOC response, and how clients conflate them. This is referenced lightly in the meeting questions section but was never written out as a proper explanatory section in the document.
+My Recommendation Before You Switch Computers
+
+The investigation document you have right now is solid and complete enough to run through tomorrow. The four items above are all KB material more than investigation material — they belong in the team knowledge base we are going to build, not necessarily in a pre-meeting reference doc.
+
+The one exception I would add right now before you go is the ASIM function reference table — just the quick reference version with the function names, what they are, and when to use them. That is genuinely useful to have on hand during the investigation itself when you are poking around in the workspace.
+
+Want me to add just that piece and then you are good to go?
+
+ok add that
+11:04 PM
+Viewed 2 files, edited a file, read a file
+
+Done. The ASIM DNS Function Reference section now sits between Step 1a and Step 2 so it is right there when you need it during the investigation. Here is what it covers:
+
+The three tiers explained cleanly — unifying parser, filtering parsers, raw tables. The naming convention callout with the explicit warning that _ASim_Dns_AzureDiagnostics() does not exist and will error, which is exactly the kind of thing that wastes time if you hit it cold. The product-to-table-to-parser mapping table. The full function quick reference with when to use each one. The imDns() vs _Im_Dns() note. The detection guidance on when to use unified vs source-specific. And the filtering performance note with side by side query examples.
+
+You are good to go on the other machine. Come back when the investigation is done and we will build the KB.
+Dns investigation prep
+Document · MD
+
+I see logs in both azurediagnostics and DNSQuery logs. Is there a way I can run a query that will show me all the different resource group and ResourceID? I feel like that may tell me exactly what is sending the logs right? also, in the DNSQueryLogs I see less volume. Fields are operationname, version, region, virtualnetworkid, quieryname, querytype, queryclass, reponsecode, answer, authoritym, sourceipaddress, sourceport, destinationipaddress, transport, privateresolverendpointid, queryresponsetime, resolutionpath, resolverpolicyid, resolverpolicyruleaction, tupe, resourceid. I k now I spelled some of this wrong but showing so you get an idea. Are these resolver logs then from private dns? you mentioend this is more for on prem servers right for internal dns? when you say that you mean internal services and servers righ ?
+11:28 PM
+
+Yes — those fields are a dead giveaway. Let me confirm and clarify everything.
+Yes — DNSQueryLogs Is Private DNS Resolver
+
+The fields you listed confirm it completely. privateresolverendpointid, virtualnetworkid, resolutionpath, and resolverpolicyruleaction are fields that only exist in Azure Private DNS Resolver logs. No other DNS source produces those fields. You have two DNS sources flowing into this workspace — Azure Firewall DNS proxy landing in AzureDiagnostics and Azure Private DNS Resolver landing in DNSQueryLogs.
+
+This is actually a really interesting finding because it means the client has more DNS infrastructure than their ticket suggested and they may not have even realized both were logging.
+Clarification on What Private DNS Resolver Is For
+
+I want to correct something I said earlier that was imprecise. Private DNS Resolver is not specifically for on-premises servers. Let me restate this properly.
+
+Private DNS Resolver is for internal name resolution — meaning resolving names that only exist inside a company's private network, whether that is Azure VNets (cloud private networks) or on-premises. The word internal here means names that are not public on the internet — things like payroll.internal.company.com or db-server-prod.azure.internal.
+
+The two scenarios where Private DNS Resolver gets used:
+
+Scenario 1 — Hybrid DNS — The company has on-premises servers and Azure resources and needs both environments to resolve each other's internal names seamlessly. Private DNS Resolver acts as the bridge between on-prem DNS and Azure DNS.
+
+Scenario 2 — Azure-native internal DNS — The company has complex Azure networking with multiple VNets and needs a central DNS service to manage resolution across all of them consistently, including private endpoints (private IP addresses for Azure services like storage accounts and databases that you do not want exposed to the public internet).
+
+So when you see DNSQueryLogs it tells you this client is doing one or both of those things. The resolutionpath and resolverpolicyruleaction fields specifically suggest they have DNS resolver policies configured, which is a more advanced setup where certain queries get routed differently based on rules.
+The Queries to Show You Exactly What Is Sending Logs
+
+For AzureDiagnostics:
+kusto
+
+AzureDiagnostics
+| where Category == "AzureFirewallDnsProxy"
+| summarize
+    Count = count(),
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated)
+    by ResourceGroup, Resource, _ResourceId
+| order by Count desc
+
+For DNSQueryLogs:
+kusto
+
+DNSQueryLogs
+| summarize
+    Count = count(),
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated)
+    by ResourceGroup, _ResourceId, VirtualNetworkId, PrivateResolverEndpointId
+| order by Count desc
+
+Combined view — both sources side by side:
+kusto
+
+let FirewallDns =
+    AzureDiagnostics
+    | where Category == "AzureFirewallDnsProxy"
+    | summarize Count=count(), FirstSeen=min(TimeGenerated), LastSeen=max(TimeGenerated)
+        by Source=strcat("AzureFirewall - ", Resource), ResourceGroup, _ResourceId;
+let ResolverDns =
+    DNSQueryLogs
+    | summarize Count=count(), FirstSeen=min(TimeGenerated), LastSeen=max(TimeGenerated)
+        by Source=strcat("PrivateDNSResolver - ", tostring(_ResourceId)), ResourceGroup=tostring(split(_ResourceId,"/")[4]), _ResourceId;
+union FirewallDns, ResolverDns
+| order by Count desc
+
+Run that combined query and you will get one clean table showing every resource sending DNS logs, what type it is, how much it is sending, and when it started and last logged. That is your architecture picture right there — no guessing required.
+What the Lower Volume in DNSQueryLogs Likely Means
+
+This makes sense architecturally. Azure Firewall DNS proxy sits in front of general internet-bound traffic — every VM, every service making any DNS query for public domains routes through it, so volume is high. Private DNS Resolver handles internal name resolution — queries for private endpoints, internal services, hybrid on-prem names — which is a smaller subset of total DNS traffic. Lower volume on the resolver side is normal and expected.
+
+Run those queries and paste what you see. The resource IDs and VNet IDs will tell us exactly what parts of their environment each source is covering.
+
+ok then. so we know that the azure firewall dns proxy logs get enabled and push directly to the siem then right? there is no dce or connector managing this? if this is wrong fix me. for dnsquerylogs how do we know how they are being ingested? - What I would like at this moment is to start a fresh clean document. - First just describing our findings. Then explain what types of logs we are confident we are collecting and what types of systems it is capable of capturing dns resolver logs for and what ever other things you think are important to take note of for the client. Feel free to add whatever you want. I just want a nice clean brief I can have on the ready for tomorrow.
+11:34 PM
+
+Let me make sure I give you accurate information on the ingestion methods before we write anything down.
+
+Azure Firewall DNS Proxy to Sentinel — You are mostly right but let me be precise. Azure Firewall logs do not push directly to Sentinel on their own. They go through Azure Diagnostics Settings. Someone on the client side went into the Azure Firewall resource, opened Diagnostic Settings, selected the DNS proxy log category, and pointed it at the Log Analytics workspace that Sentinel sits on top of. There is no Sentinel data connector or DCE managing this — it is a native Azure platform feature. The connector you see in Sentinel for Azure Firewall is essentially just a setup guide and status indicator. The actual pipeline is Firewall → Diagnostic Settings → Log Analytics Workspace → lands in AzureDiagnostics. So no DCE, no agent, no connector doing heavy lifting. Just a diagnostic setting configured on the resource itself.
+
+DNSQueryLogs ingestion method — this one I want you to verify before we document it because there are two possible paths and I cannot tell from here which one they used. Run this:
+kusto
+
+DNSQueryLogs
+| take 5
+| project TimeGenerated, _ResourceId, Type, _IsBillable
+
+Also go into the Azure Portal and look at the Private DNS Resolver resource directly. Check its Diagnostic Settings the same way you would on a firewall. If there is a diagnostic setting pointing at the workspace, that is the ingestion path — same mechanism as the firewall, no agent or DCE. If there is no diagnostic setting there, it may be going through a DCE or data collection rule, which is a newer ingestion path Microsoft has been introducing.
+
+Once you confirm that, come back and we will write the brief clean and accurate.
+
+I dont have access to their azure stuff. We are co-managed. Let me run these commands though and tell you waht I see
+11:36 PM
+
+Perfect — run these and paste back whatever you see. While you do that let me give you the two or three queries that will tell us the most about the ingestion path from inside Sentinel alone, since you cannot get to their Azure portal directly.
+kusto
+
+// Check if there is any DCE or DCR fingerprint on the DNSQueryLogs records
+DNSQueryLogs
+| take 5
+| project TimeGenerated, _ResourceId, Type, _IsBillable, _SubscriptionId
+
+kusto
+
+// Check if the records have an ingestion time stamp we can compare
+// A big gap between TimeGenerated and ingestion time can indicate pipeline type
+DNSQueryLogs
+| take 100
+| extend IngestionDelay = ingestion_time() - TimeGenerated
+| summarize
+    AvgDelaySeconds = avg(IngestionDelay / 1s),
+    MaxDelaySeconds = max(IngestionDelay / 1s)
+
+kusto
+
+// See if _ResourceId gives us enough to identify the resolver resource and subscription
+DNSQueryLogs
+| summarize count() by _ResourceId, _SubscriptionId
+
+kusto
+
+// Same check for AzureDiagnostics firewall records for comparison
+AzureDiagnostics
+| where Category == "AzureFirewallDnsProxy"
+| take 5
+| project TimeGenerated, _ResourceId, Resource, ResourceGroup, _SubscriptionId
+
+Paste whatever comes back from all of these and also from your combined source query if you ran that. Even without Azure portal access we can piece together a solid picture from the metadata inside the records themselves. Take your time — I will be here.
+
+resouce id is a path microsoft.network/dnsresolverpolicies   that is not all of it but prob the important piece you need to know. there is no _subscriptionID. avgdelay 94.583616342 maxdelay 170.2964401
+11:42 PM
+
+That is really useful. Let me tell you exactly what this means.
+What We Now Know About DNSQueryLogs Ingestion
+
+The resource ID path microsoft.network/dnsresolverpolicies confirms two things:
+
+First, this is definitively Azure Private DNS Resolver with resolver policies configured. Resolver policies are an advanced feature that lets you apply rules to DNS queries — for example blocking certain domains or routing specific queries differently. The fact that this resource type is the one logging means the client has a non-trivial DNS setup. This is not a basic resolver — someone put thought into this architecture.
+
+Second, there is no _SubscriptionId populated. This is actually a meaningful signal. Native Sentinel tables and agent-based ingestion almost always populate that field. When it is missing it typically means the logs are coming in through a resource-centric diagnostic path — meaning the resource itself is emitting directly to the workspace rather than going through an agent or a DCE pipeline. This aligns with the diagnostic settings ingestion path.
+
+The ingestion delay numbers:
+
+An average delay of about 94 seconds and a max of around 170 seconds. That is roughly 1.5 to 3 minutes of lag between when the DNS event happened and when it landed in Sentinel. This is completely normal for diagnostic settings based ingestion. Agent based ingestion is usually faster. DCE pipeline ingestion varies. What you are seeing here is consistent with the Azure platform collecting logs from the resource and batching them into the workspace — which is exactly what diagnostic settings does.
+Our Confidence Level Now
+
+Putting it all together:
+
+AzureDiagnostics / Azure Firewall DNS Proxy — Ingested via diagnostic settings configured directly on the Azure Firewall resource. No agent, no DCE, no Sentinel connector doing the heavy lifting. Pipeline is Firewall → Diagnostic Settings → Log Analytics Workspace.
+
+DNSQueryLogs / Private DNS Resolver — Ingested via diagnostic settings configured on the DNS Resolver Policy resource. Same mechanism, different resource. No agent, no DCE. The missing subscription ID and the ingestion delay both support this conclusion.
+
+We are confident enough to document this. Ready to write the brief whenever you are — just say go.
+
+yes but its still not clear to me - is the dnsquerylogs giving us the resolver logs someone looking to use for security detection then or is this something different and is more just diagnostic logs?
+11:44 PM
+
+Really important question and the answer is — it is both, and that is what makes it confusing.
+The Honest Answer
+
+DNSQueryLogs from Azure Private DNS Resolver contains actual DNS query and response data — meaning the domain that was queried, the source IP that asked, the response code, what answer came back, and when it happened. Those are exactly the fields you described earlier. queryname, sourcipaddress, responsecode, answer — that is resolver log data. That is security-relevant data.
+
+However — and this is the important nuance — what devices are asking those queries matters enormously.
+
+Private DNS Resolver primarily handles internal name resolution. Think private endpoints, internal services, hybrid on-premises name resolution. The devices querying through it are typically Azure services, VNet resources, and on-premises systems routing internal lookups through Azure.
+
+This is different from Azure Firewall DNS Proxy which sits in front of general outbound DNS traffic — meaning when a VM wants to reach google.com, github.com, or a malware C2 domain, that query goes through the firewall proxy. That is where you see the full breadth of what devices are trying to reach on the internet.
+Think About It This Way
+Source	Primarily Captures	Security Value
+Azure Firewall DNS Proxy (AzureDiagnostics)	All outbound DNS queries from VNet resources — public and internal	HIGH — catches malware beaconing, suspicious domains, data exfiltration via DNS
+Private DNS Resolver (DNSQueryLogs)	Internal name resolution — private endpoints, hybrid on-prem lookups, policy-controlled queries	MEDIUM — catches lateral movement to internal resources, policy violations, unusual internal lookups
+So For Detection Purposes
+
+The Firewall DNS proxy logs in AzureDiagnostics are your primary detection surface. This is where you will catch the threats that matter most — a compromised VM trying to reach a known bad domain, DNS tunneling, beaconing, fast flux domains.
+
+The Private DNS Resolver logs in DNSQueryLogs are supplementary. They give you visibility into internal traffic patterns, which matters for detecting lateral movement and insider threats, but they will not show you a device trying to reach malware infrastructure on the internet because that traffic goes through the firewall, not the resolver.
+
+The fact that you have both is actually good news. Together they give you a more complete picture than either one alone. But if you had to pick one as the foundation for DNS security detections in this environment, it is the firewall proxy logs.
+One More Thing Worth Flagging for the Client
+
+The resolverpolicyruleaction field in DNSQueryLogs is particularly interesting. If the client has resolver policies configured that are blocking or redirecting certain queries, that field will tell you when a policy fired and what it did. That is both a detection signal and an audit trail for their DNS security controls. Worth asking them tomorrow whether those policies are actively configured and what they are designed to do.
+
+Ready to write the brief now with all of this baked in?
+
+sometimes your answers can be too much. From now on I need straight answers then after it can go into detail and be longer. You gave me great info its just hard when you are new and trying to learn when you leave me hanging for the simple question yes or no first. I know its prob not easy but the way the human brain learns is in layers starting small and building on foundational information. So I am always trying to lock in and walk up the steps of understanding. When we originally talked about private dns I imagined local servers communicating and resolving dns for systems not available on the internet. for example. If a laptop tried to resolve a private web server within the infrastructure I imagined it would hit the local dns first then if it doesnt find it it then would hit the firewall. now after this explination it sounds like maybe im wrong.
+11:50 PM
+
+Yes you are mostly right — but one piece needs adjusting.
+
+Your mental model is solid. A laptop trying to reach an internal server would hit the local DNS first. If that local DNS knows the answer it responds directly. You are right about that.
+
+The piece to adjust is the firewall. The laptop does not hit the firewall DNS proxy to resolve internal names. The firewall proxy is in the path for outbound internet-bound queries — when a device wants to reach something on the public internet. Internal name resolution stays internal.
+
+Private DNS Resolver sits in the middle of that internal world. It is the service that knows how to answer internal name queries across complex Azure environments — especially when you have multiple VNets or a hybrid connection back to on-premises. Think of it as the internal company phone book. The firewall is the gatekeeper for calls going outside the building.
+
+So the layered picture is:
+
+    Internal name? → Local DNS or Private DNS Resolver handles it. Never touches the firewall.
+    Public internet name? → Firewall DNS proxy intercepts it, logs it, forwards it out.
+
+That is why for security detections the firewall proxy logs are more valuable for catching threats — because malware, beaconing, and suspicious domains all live on the public internet side.
+
+I get that. but man. please pause here. Private dns meaning the dnsquery logs. What drives this? is it a on prem server running a service or something in azure. Second. Please do not make this response complicated. I need to know this. What the hell is it resolving then if not services and systems within a private network? you broke it down as mainly systems communicating so when you said that I am imagining actual systems that are not operated by humans.
+11:53 PM
+
+It is a service running in Azure. Not on-prem. Not a physical server. Microsoft hosts it for you.
+
+What it resolves is exactly what you said — private internal names. Things that do not exist on the public internet.
+
+The confusion from my earlier explanation was me overcomplicating it. Here is the simple version:
+
+When a VM in Azure wants to reach another internal resource — another VM, a private database, a private storage account — it needs to resolve that internal name to an IP address. Private DNS Resolver answers that question. It is the internal phone book for Azure resources talking to each other.
+
+So yes — it is systems communicating with systems. Mostly automated. A VM asking "where is the database?" and the resolver saying "it is at this internal IP."
+
+That is it. That is all it does.
+
+ok thank you. please provide that write up now
+11:54 PM
+Created a file, read a file
+
+Clean and ready for tomorrow. Here is the structure at a glance:
+
+The brief opens with a two line summary so anyone reading it immediately knows the headline. It then breaks down each source in plain language — what it is, what it captures, and why it matters for security. Data quality findings are documented. Coverage gaps are listed as questions not conclusions, so you are not making claims about their environment you cannot prove. And the scope boundary is stated clearly at the bottom so there is no ambiguity walking out of the meeting.
+
+Fill in the client name, workspace name, and meeting date and you are good to go.
+Dns client brief
+Document · MD
+
+can you please tell me a story to put the world of dns into my brain. All of this is useful but without understanding how to use it in the real world its kind of useless. Can you please tell me a story about a man who is setting up is company. He has a 3 story building and a big server room in it. There is a telemarketing team on level 2 and it team on level 1. They have on prem servers running vmware and have databases and all sorts of storage and services. They also have an azure environment and remote workers that use always on vpn. They have a hybrid invironment. They use intune for patching and mdm and managing laptops and what not. They also have another office that runs much the same way. They also have 1 analytic workspace with sentinel and defender xdr. -- As the owner you are tasked to setup dns services and you also need to coordinate with your mssp to get the dns logs to the siem and verify. -- Tell me the entire story. how you are thinking about it, what you consider, why you make the decisions you do. Then walk me through your communication with the mssp and what you need to configure on your side. Then flip the script and tell me then what goes on from the mssp side. How do they think what is considered and what is configured. -- The goal of this is to lock everything in. As you tell the story use it to expand on everything so I walk away with a full understanding. This will fix me
+12:05 AM
+The Story of Meridian Group and Their DNS Journey
+The Company
+
+Robert Vasquez is the IT Director for Meridian Group — a mid-sized telemarketing and data analytics firm. They have two offices. Headquarters in Austin, Texas — a three story building with a server room in the basement. The second office is in Phoenix. About 400 employees total. 200 in Austin, 150 in Phoenix, and 50 remote workers scattered across the country who connect via Always On VPN.
+
+The Austin building has three floors. Floor 1 is the IT team — 12 people. Floor 2 is the telemarketing floor — 180 agents sitting at desks with laptops, headsets, and a CRM system they live in all day. Floor 3 is executive offices and finance.
+
+The server room in the basement is running VMware. Inside that VMware environment are virtual machines doing all kinds of work — domain controllers running Active Directory, file servers, a SQL database cluster the CRM depends on, an internal web application the finance team uses, and a bunch of utility servers for monitoring and backup. These servers have names like dc01.meridian.local, sql-prod-01.meridian.local, fileserver-02.meridian.local. Names that mean nothing to the public internet. Names that only exist inside Meridian.
+
+They also have an Azure environment. Some workloads have moved to the cloud — a newer version of their analytics platform runs on Azure VMs, they use Azure SQL for some reporting databases, and they have Azure Storage for backups. Their Microsoft 365 environment lives in Azure too. They use Intune to manage every laptop in the company — pushing patches, enforcing policies, and keeping an inventory of every device.
+
+Robert has one Sentinel workspace. One. Everything feeds into it — Defender XDR, their on-premises servers, their Azure resources, and eventually their network logs. He has an MSSP called ClearWatch that co-manages the Sentinel environment with him.
+Robert Sits Down to Think About DNS
+
+It is a Tuesday morning. Robert has a coffee and a blank whiteboard. He is about to design DNS for his entire organization and he knows if he gets this wrong, nothing will work and nobody will be able to find anything.
+
+He starts by asking himself a simple question.
+
+When any device in my company needs to find something by name — where does it go to ask?
+
+He starts drawing.
+The On-Premises DNS World
+
+The foundation of Meridian's internal world is Active Directory. Active Directory is the system that manages every user account, every computer, every login, and every permission i
+
+
+Claude is AI and can make mistakes. Please double-check responses.
+Dns client brief · MD
+# DNS Log Collection — Client Brief
+**Date:** [Meeting Date]
+**Prepared By:** [Your Name]
+**Client:** [Client Name]
+**Sentinel Workspace:** [Workspace Name]
+
+---
+
+## Summary
+
+We have confirmed that DNS logs are actively flowing into the Sentinel workspace from two
+distinct sources. Both sources were identified through direct investigation of the workspace.
+This brief outlines what we found, what each source covers, and what we need to discuss.
+
+---
+
+## What We Found
+
+The workspace is receiving DNS logs from two separate Azure services:
+
+**Source 1 — Azure Firewall DNS Proxy**
+Logs landing in the `AzureDiagnostics` table. Higher volume. Confirmed active and healthy.
+
+**Source 2 — Azure Private DNS Resolver**
+Logs landing in the `DNSQueryLogs` table. Lower volume. Confirmed active and healthy.
+Resolver policies are configured on this resource, indicating an advanced DNS setup.
+
+Both sources are ingested via Azure Diagnostic Settings — a native Azure platform feature
+where the resource sends its logs directly to the Log Analytics workspace Sentinel sits on top of.
+No agent and no additional connector is required for either source.
+
+---
+
+## What Each Source Captures
+
+### Azure Firewall DNS Proxy
+The firewall acts as a middleman for DNS queries. When any device or system inside the
+Azure network needs to resolve a public internet domain — google.com, a software update
+server, or a malicious C2 domain — that query passes through the firewall. The firewall
+logs every query and every response before forwarding it on.
+
+**What this means for coverage:**
+Any Azure VNet resource configured to use the firewall as its DNS server will appear in
+these logs. This is the broadest DNS visibility available in this environment.
+
+**What this means for security:**
+This is the primary detection surface. Threats like malware beaconing, DNS tunneling,
+data exfiltration over DNS, and connections to known malicious domains will show up here.
+
+### Azure Private DNS Resolver
+A Microsoft-managed service running inside Azure whose job is to resolve internal private
+names — resources that do not exist on the public internet. When an Azure VM needs to reach
+a private database, a private storage account, or another internal service, it queries the
+resolver to get the internal IP address. This is essentially the internal phone book for
+Azure resources communicating with each other.
+
+**What this means for coverage:**
+Internal Azure-to-Azure traffic and hybrid on-premises to Azure name resolution.
+Lower volume than the firewall proxy because it only handles internal queries.
+
+**What this means for security:**
+Supplementary detection surface. Useful for spotting unusual internal resource lookups,
+lateral movement between internal systems, and DNS resolver policy violations.
+The `resolverpolicyruleaction` field is particularly useful — it records when a resolver
+policy fired and what action was taken, providing an audit trail for internal DNS controls.
+
+---
+
+## Data Quality
+
+Both sources are returning well-populated records with the critical fields required for
+security monitoring — source IP address, queried domain name, query type, and response code.
+Data is consistent with no visible gaps in ingestion.
+
+Ingestion delay on DNSQueryLogs is approximately 90 to 170 seconds. This is normal and
+expected for diagnostic settings based ingestion.
+
+---
+
+## What These Logs Are Capable of Capturing
+
+Given the architecture confirmed above, these logs will capture DNS activity from:
+
+- Azure Virtual Machines and cloud workloads inside VNets routed through the firewall
+- Azure-native services resolving internal private names through the resolver
+- Any hybrid on-premises systems configured to forward internal DNS queries to the resolver
+---
+
+## Known Coverage Gaps — To Be Confirmed with Client
+
+The following are likely outside current DNS log coverage based on what we know.
+These need to be confirmed in our conversation:
+
+- On-premises machines and servers using a local Windows DNS server not connected to Azure
+- Office laptops and desktops not routing DNS through the Azure Firewall
+- Remote and VPN users depending on how their DNS is configured
+- Any Azure VNets not configured to use the firewall as their DNS server
+---
+
+## What Is Not in Place Yet
+
+No DNS analytics rules are currently active in the workspace. Microsoft provides a library
+of out of the box detection templates designed specifically for normalized DNS data. These
+are available but have not been enabled.
+
+Enabling these rules is a detection engineering decision that requires confirmation of
+data quality, coverage scope, and a defined owner for alert response. This is not something
+that happens automatically when logs arrive.
+
+---
+
+## Open Items for Today's Meeting
+
+1. Confirm which Azure VNets are configured to route DNS through the firewall
+2. Confirm whether on-premises systems are in scope and what DNS server they use
+3. Confirm what the resolver policies are configured to do
+4. Confirm who owns alert response if detections fire
+5. Confirm whether detection engineering is in scope for our engagement or requires
+   a separate workstream
+---
+
+## Our Scope — Important Clarification
+
+Our team has confirmed that DNS logs are flowing, identified the sources, validated data
+quality, and documented the architecture. This is our scope for this engagement.
+
+Detection engineering — writing, enabling, tuning, and maintaining analytics rules —
+is a separate function that requires a defined owner. We are prepared to discuss what
+that looks like but cannot commit to owning it without a defined engagement scope.
+
+---
+
+*Brief prepared following direct workspace investigation prior to meeting.*
+
+
