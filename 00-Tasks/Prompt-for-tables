@@ -128,6 +128,8 @@ For each table return exactly these fields in a simple table format with no extr
 - **Description** — one plain English sentence describing what kind of data lives in this table and what generates it
 - **SingleLogType** — answer Single if this table is purpose built for one specific log type and one type of data will always be found here regardless of what is sending. Answer Multiple if this table is a catch-all designed to receive different log types from different origins — for example Syslog can hold Linux authentication logs, kernel messages, firewall logs and application logs all in the same table distinguished only by the sending source, and CommonSecurityLog can hold CEF formatted data from many different vendors like Palo Alto, Fortinet and Cisco all in the same table distinguished by the DeviceVendor field. If it cannot be determined from documentation enter Unsure
 - **Billable** — is ingestion into this table free or billable as documented by Microsoft. Answer Free, Billable, or Unsure
+- **Solutions** — list all Sentinel or Log Analytics solutions that depend on or use this table as documented by Microsoft, comma delimited. Examples include SecurityInsights, UEBA, Security, Fusion. Enter None if no solutions are listed
+- **ResourceTypes** — list the Azure resource types associated with this table as documented by Microsoft in the Azure Monitor reference, comma delimited. These describe what kind of Azure resource generates this data. Enter Native if the table is written to by Azure or Microsoft backend infrastructure with no associated resource type listed. Enter Unsure if it cannot be determined
 - **Notes** — for third party vendor tables enter the vendor name and leave everything else blank. For all other tables leave this field blank. All evaluation and flagging happens in a separate pass
 
 ---
@@ -144,6 +146,8 @@ Review the following and provide your findings:
 - Is the ASIM parser actively maintained and recommended for use in detections?
 - Are there any cost or ingestion concerns worth flagging based on what this table collects?
 - Are there any security monitoring gaps worth flagging — things a SOC should know about this table before relying on it for detections?
+- Do the listed Solutions indicate any critical Sentinel capabilities that would be impacted if this table went silent?
+- Do the listed ResourceTypes raise any questions about what should be sending data to this table in this environment?
 - Is there anything in the notes that requires follow up or investigation?
 
 Here is the table data:
@@ -156,7 +160,8 @@ Here is the table data:
 **Description:** [paste value]
 **SingleLogType:** [paste value]
 **Billable:** [paste value]
+**Solutions:** [paste value]
+**ResourceTypes:** [paste value]
 **Notes:** [paste value]
 
 Return your findings as a short numbered list. Be specific and direct. Do not repeat information already in the fields unless it is directly relevant to a finding. If nothing requires flagging say so clearly.
-```
