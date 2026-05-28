@@ -1,0 +1,131 @@
+# Table Level Audit Checklist
+## Purpose
+Use this checklist when going through each table in a client Sentinel workspace during an audit. Every item is either something to document, investigate, or raise with the client. Work through each table systematically and record findings in the table watchlist.
+
+---
+
+## 1. Ingestion Health
+- [ ] Is data currently flowing into this table?
+- [ ] When was the last log received?
+- [ ] How many days since last ingestion?
+- [ ] Is the ingestion volume consistent or are there spikes and drops?
+- [ ] Has ingestion ever stopped and restarted unexpectedly?
+
+**KQL to check:**
+```kql
+Usage
+| where DataType == "TableNameHere"
+| summarize LastIngest = max(TimeGenerated), TotalGB = sum(Quantity)/1024 by DataType
+```
+
+---
+
+## 2. Source Investigation
+- [ ] What is actually writing to this table?
+- [ ] Are all expected sources present?
+- [ ] Are there any unexpected or unrecognized sources?
+- [ ] Are any known devices or systems missing that should be logging here?
+- [ ] Is there a decommissioned system still sending data?
+
+**KQL to check:**
+```kql
+TableNameHere
+| summarize count() by Computer, SourceSystem
+| order by count_ desc
+```
+
+---
+
+## 3. Connector & Transport Review
+- [ ] What connector or transport mechanism is responsible for this table?
+- [ ] Is there more than one connector mapped to this table?
+- [ ] If multiple connectors exist — which one is actually doing the work?
+- [ ] Is a legacy connector still active alongside a newer one?
+- [ ] Is the connector a legacy version that should be migrated? (e.g. MMA to AMA, legacy AWS to S3)
+
+---
+
+## 4. Free vs Billable
+- [ ] Is this table free to ingest or billable?
+- [ ] If billable — is the volume justified by detection value?
+- [ ] Are there high volume tables producing zero detections or incidents?
+- [ ] Is there an opportunity to reduce cost via DCR filtering without losing coverage?
+
+**Free tables — confirm these are enabled on every client:**
+- AzureActivity
+- SentinelHealth
+- SecurityAlert (Defender suite)
+- SecurityIncident
+- OfficeActivity (SharePoint, Exchange, Teams)
+
+---
+
+## 5. Retention Policy
+- [ ] What is the current retention setting for this table?
+- [ ] Is it appropriate for the data type and compliance requirements?
+- [ ] Is anything retained longer than necessary and driving unnecessary cost?
+- [ ] Is anything retained too short and risking loss of important data?
+
+---
+
+## 6. DCR & Transformation
+- [ ] Is there a Data Collection Rule associated with this table?
+- [ ] Is the DCR filtering or transforming data before ingestion?
+- [ ] Is anything being dropped by the DCR that should be kept?
+- [ ] Is the DCR name documented in the watchlist?
+- [ ] Is there a DCE associated — if so is it documented?
+
+---
+
+## 7. Detection Dependency
+- [ ] Is any analytic rule querying this table?
+- [ ] If yes — are those rules currently enabled?
+- [ ] If the table went silent would those detections break silently?
+- [ ] Is there a silent log source detection monitoring this table?
+- [ ] If no SLS detection exists — should one be created?
+
+---
+
+## 8. Watchlist Association
+- [ ] Is any watchlist referenced in detections that use this table?
+- [ ] Is the watchlist current and accurate?
+- [ ] Are there gaps between what is in the watchlist and what is in the environment?
+
+---
+
+## 9. ASIM & Normalization
+- [ ] Does this table have an ASIM parser available?
+- [ ] Is the ASIM parser deployed and in use?
+- [ ] Are detections using the normalized schema or querying the raw table directly?
+
+---
+
+## 10. Multi-Source Awareness
+- [ ] Can this table receive data from multiple source types?
+- [ ] Have all contributing sources been identified and documented?
+- [ ] Is volume per source documented so anomalies can be detected?
+
+---
+
+## 11. Client Conversation Flags
+Flag these as you go — they become the agenda for the client review session:
+
+- [ ] Unknown source writing to table — client needs to identify
+- [ ] Expected source missing — client needs to investigate
+- [ ] Legacy connector still active — confirm if safe to decommission
+- [ ] High volume table with no detection value — confirm if data is needed
+- [ ] Retention mismatch with compliance requirements — confirm policy
+- [ ] Table exists but client was unaware — explain what it is and why
+- [ ] Duplicate data detected — confirm which source is authoritative
+
+---
+
+## Notes
+- Work through one table at a time
+- Document all findings in the table watchlist as you go
+- Flag anything you cannot determine without client input — do not guess
+- All client conversation flags get added to the audit review agenda
+
+---
+*Owner: Engineering*
+*Use during: Initial client audit and periodic review sessions*

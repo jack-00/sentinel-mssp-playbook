@@ -1,0 +1,145 @@
+# Sentinel Table Knowledge Base — Reference Sources
+
+## Overview
+
+To build a complete and scalable table knowledge base we use two primary Microsoft sources for all standard tables, and supplement with our own internal reference for third party and custom tables. This document outlines what each source provides, how to use it, and how the knowledge base grows over time.
+
+---
+
+## Source 1 — Microsoft Sentinel Tables & Connectors Reference
+
+**URL:** https://learn.microsoft.com/en-us/azure/sentinel/sentinel-tables-connectors-reference
+
+### What It Is
+The official Microsoft reference that maps every standard Sentinel table to the data connector responsible for ingesting it.
+
+### What It Gives You
+| Field | Available |
+|---|---|
+| Table Name | Yes |
+| Associated Data Connector | Yes |
+| DCR Support | Yes |
+| Lake-only Ingestion Support | Yes |
+
+### How We Use It
+- Primary source for populating the **DataConnector** field in the table watchlist
+- Used to identify which tables are associated with which connector during onboarding
+- Used to cross-reference connector configuration against expected tables
+- Scrapeable — use this to pre-populate the table watchlist for all standard Microsoft tables
+
+### Limitations
+- Does not include third party vendor tables ending in `_CL`
+- Does not include custom client tables
+- Does not provide table descriptions or schema details
+- Does not tell you if a table supports multiple data sources
+
+---
+
+## Source 2 — Azure Monitor Log Analytics Table Reference by Category
+
+**URL:** https://learn.microsoft.com/en-us/azure/azure-monitor/reference/tables-category
+
+### What It Is
+The official Microsoft reference for every Log Analytics table organized by category. Each table links to its own individual page with full schema and column definitions.
+
+### What It Gives You
+| Field | Available |
+|---|---|
+| Table Name | Yes |
+| Category | Yes — tables are organized by category |
+| Description | Yes — on each individual table page |
+| Full Schema / Column Definitions | Yes — on each individual table page |
+| SingleSource Inference | Yes — derivable from schema columns |
+
+### How We Use It
+- Primary source for populating the **Category** and **Description** fields in the table watchlist
+- Used to infer **SingleSource** — if a table schema contains columns like `Computer`, `SourceSystem`, `DeviceVendor`, or `HostName` it is designed for multiple sources
+- Each table page linked from this index is scrapeable for description and schema details
+- Categories from this reference become our standard category taxonomy
+
+### Limitations
+- Does not cover third party vendor tables ending in `_CL`
+- Does not cover custom client tables
+- Does not include connector mapping — use Source 1 for that
+
+---
+
+## Source 3 — Internal Third Party Reference (To Be Built)
+
+### What It Is
+Our own internal knowledge base for third party and custom tables that are not covered by Microsoft documentation. Built and maintained by the team over time as new client environments are onboarded.
+
+### What It Will Give You
+| Field | How It Gets Populated |
+|---|---|
+| Table Name | Discovered via Usage query in workspace |
+| Category | Manually assigned during client review |
+| Description | Sourced from vendor documentation or manual inspection |
+| Data Connector | From Content Hub or vendor documentation |
+| SingleSource | Determined by inspecting actual data in workspace |
+| Notes | Added during client review |
+
+### How We Build It
+1. When a `_CL` table is discovered in a workspace via the Usage query it gets flagged for review
+2. During the client review session the table is investigated — what is writing to it, what vendor, what purpose
+3. Details are documented and added to the internal reference
+4. Over time this reference grows to cover all common third party tables across our client base
+5. Eventually this reference can also be used to pre-populate watchlists for clients using the same third party tools
+
+---
+
+## How The Three Sources Work Together
+
+```
+Standard Microsoft Tables
+    Source 1  →  DataConnector field
+    Source 2  →  Category, Description, SingleSource fields
+
+Third Party / Custom Tables (_CL)
+    Source 3  →  All fields — built manually over time
+```
+
+---
+
+## Scraping Strategy
+
+### Phase 1 — Automated Baseline
+Scrape Source 1 and Source 2 to pre-populate the table watchlist for all standard Microsoft tables. This covers approximately 80% of what will be seen in a typical E3/E5 client workspace.
+
+**Source 1 scrape targets:**
+- Table name
+- Data connector name
+- DCR support flag
+
+**Source 2 scrape targets:**
+- Table name
+- Category
+- Description from individual table page
+- Schema columns — used to derive SingleSource flag
+
+### Phase 2 — Workspace Specific
+Run the following KQL query against each client workspace to get the full list of tables that have ever received data:
+
+```kql
+Usage
+| where TimeGenerated >= datetime(2000-01-01)
+| summarize LastIngest = max(TimeGenerated) by DataType
+| order by LastIngest desc
+```
+
+Cross-reference results against the automated baseline. Any table not in the baseline is a `_CL` table or custom table that needs manual review.
+
+### Phase 3 — Manual Review
+For all unmatched tables from Phase 2, investigate during the client review session and add findings to Source 3 — the internal third party reference.
+
+---
+
+## Naming Convention
+
+All watchlists and workbooks follow this convention:
+
+```
+[companyprefix]-wl-[name]
+[companyprefix]-wb-[name]
+```
+
