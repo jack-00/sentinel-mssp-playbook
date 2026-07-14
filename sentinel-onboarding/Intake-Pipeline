@@ -1,0 +1,288 @@
+# Sentinel Client Onboarding — Master Plan
+**Status:** Pre-kickoff
+**Meeting:** Tomorrow (proxy client only — end client not present)
+**Timeline:** 30 days active / 45-day runway
+**Team:** Platform team (3 techs) — no pro-services
+
+---
+
+## The North Star
+
+> *"By the end of this process you'll have a living dashboard inside your own
+> Sentinel environment that shows your data sources, detection coverage, ingest
+> health, and critical asset monitoring — all in one place. Everything we do
+> from here feeds that."*
+
+This is the one sentence that answers every client question about what they
+are getting. Use it tomorrow.
+
+---
+
+## The Onboarding Pipeline
+
+The pipeline is a dependency chain. Each step unlocks the next.
+Steps 1 and 2 run in parallel. Nothing technical starts before Step 2 closes.
+
+```
+STEP 1 — ENVIRONMENT INTAKE
+Who:      Client
+Output:   ClientInfo watchlist, EnvironmentProfile doc
+Unlocks:  Full picture of who we are working with —
+          environment, crown jewels, compliance, licensing,
+          Defender XDR connector status
+Have it:  YES — intake package ready (see Deliverables)
+
+STEP 2 — LIGHTHOUSE DELEGATION
+Who:      End client's tenant admin (cannot be proxied —
+          Azure does not allow re-delegation)
+Output:   Platform team has access to the workspace
+Unlocks:  Everything technical. This is the critical path.
+Have it:  YES — Lighthouse guidance doc ready
+
+STEP 3 — AUDIT WORKBOOK RUN
+Who:      Platform team
+Process:  KQL to find active tables → PowerShell to pull
+          schemas and detections → Python to parse into
+          spreadsheet and per-table files → AI analysis
+          per table (category, subcategory, connector,
+          description, sub-sources, detection logic)
+Output:   Active table inventory, schema map,
+          existing detection inventory,
+          table→detection→watchlist mapping
+Unlocks:  You know what is actually in the workspace
+Have it:  YES — audit process exists
+
+STEP 4 — BASELINE CHECKLIST
+Who:      Platform team (internal)
+Output:   Gap report — UEBA enabled, auditing on,
+          MMA remnants, DCR coverage, support plan,
+          Defender XDR connector configured,
+          commitment tier optimized, daily cap set
+Unlocks:  Phase 1 findings report — first wow deliverable
+Have it:  NOT YET — Fable 5 job
+
+STEP 5 — DATA SOURCE INTAKE
+Who:      Collaborative — platform team pre-populates
+          from Step 3 audit output, client confirms
+          and fills gaps only they know
+Fields:   Table, Multi, Data Source, Category,
+          Source Category, Data Connector, DCR, DCE,
+          Transport, Description, Dependencies,
+          Health Mon, Sec Detections, Retention,
+          Vetted, Notes, API Key Expiry,
+          Cribl/Forwarder, Load Balancer,
+          Custom Parser, Forwarder Owner
+Output:   DataSources watchlist — master source of
+          truth for the environment
+Unlocks:  Detection team knows what to deploy.
+          Silent-log watchlist gets built.
+Have it:  NOT YET — collaborative template to build
+
+STEP 6 — CRITICAL ASSET + WATCHLIST INTAKE
+Who:      Dedicated working session with client
+Output:   Unified critical watchlist
+          (source, type, threshold, severity,
+          owner, escalation path)
+          Silent-log detection scope defined
+Unlocks:  Silent-log detections, priority alerting,
+          HA edge case handling
+Have it:  NOT YET — Fable 5 job
+Note:     Telegraph tomorrow: "one of our early sessions
+          will map your most critical sources and assets —
+          that drives how we tune alerting specifically
+          for your environment"
+
+STEP 7 — DETECTION DEPLOYMENT
+Who:      Detection team
+Input:    DataSources watchlist (Step 5),
+          Critical asset watchlist (Step 6)
+Output:   Managed detections pushed to environment,
+          keep/kill/replace decision on existing rules
+Unlocks:  Automation rules live, logic app wired,
+          incidents flowing to ServiceNow
+
+STEP 8 — INTEGRATION + VALIDATION
+Who:      Platform team
+Output:   End-to-end test fire confirmed,
+          ServiceNow ticket flow verified,
+          client portal access live,
+          silent-log detections armed and tested
+Unlocks:  Go-live and hypercare
+
+STEP 9 — AUDITDECK REVIEW (The Payoff)
+Who:      Platform team presents, client receives
+Input:    Everything from Steps 1–8 living inside
+          the workbook — environment info, data sources,
+          detection coverage, ingest health,
+          silent-log status, critical asset monitoring
+Output:   Living dashboard of their security posture
+          at a glance
+Have it:  Foundation exists — gets richer with
+          every step that feeds it
+Note:     This is the story of the engagement told
+          visually. The moment that makes them refer
+          the next client.
+```
+
+---
+
+## 30-Day Timeline
+
+| Phase | Days | Steps | Focus |
+|-------|------|-------|-------|
+| **0 — Access & Discovery** | 1–7 | 1 + 2 | Intake package delivered, Lighthouse delegation executed by end client |
+| **1 — Assess & Baseline** | 8–15 | 3 + 4 | Audit workbook run, baseline gap report produced, Phase 1 findings delivered |
+| **2 — Build & Integrate** | 16–24 | 5 + 6 + 7 | Data source intake collaborative session, critical asset working session, detections deployed, logic app wired |
+| **3 — Validate & Go-Live** | 25–30 | 8 + 9 | End-to-end validation, AuditDeck review, go-live, hypercare begins |
+
+**Critical path:** Step 2 — Lighthouse delegation.
+Everything technical starts when it executes.
+**Reality check:** 2–3 days actual technical effort.
+Calendar time is mostly waiting on client approvals.
+30 days is comfortable. 45 covers proxy-relay delays.
+
+---
+
+## Tomorrow's Meeting
+
+### Situation
+- Proxy client only — end client not in the room
+- End client's environment answers are not available
+- This is an **alignment meeting**, not a discovery meeting
+
+### The One Sentence Pitch
+*"By the end of this process you'll have a living dashboard inside your own
+Sentinel environment that shows your data sources, detection coverage, ingest
+health, and critical asset monitoring — all in one place. Everything we do
+from here feeds that."*
+
+### One-Hour Agenda
+
+**Intros (5 min)**
+One liner: "We're the platform team managing Sentinel day-to-day for you —
+glad to extend that to your client."
+
+**Block Zero — Relationship & Operating Model (20 min)**
+The headliner. End client is not in the room — this is your one chance
+to get candid answers from the proxy before the three-party dynamic starts.
+
+Opener:
+> *"Before the technical side — walk us through how this came together
+> and how you picture the day-to-day working with us in the mix."*
+
+Five play-it-through scenarios — all must be answered before leaving
+this block:
+
+- **Access chain:** "When we send the Lighthouse onboarding doc — who
+  receives it and who in the end client's tenant executes it?"
+- **Communication flow:** "We spot a broken connector needing tenant-side
+  hands on a Tuesday — who do we contact and what is the realistic
+  turnaround?"
+- **Ticket & incident flow:** "An incident fires at 2am and lands in
+  ServiceNow — whose T1 works it and who is in the client portal?"
+- **Authority & money:** "We recommend a connector that adds ingest
+  cost — who approves it?"
+- **Scope boundary:** "What does the end client believe you are doing
+  versus what we are doing?"
+
+Proxy-only bonus questions — candid, end client not listening:
+- "What does the client expect this to feel like — have they been
+  through a SOC onboarding before?"
+- "Anything we should know about how they operate — responsive,
+  slow on approvals, technical depth on their side?"
+
+**Watch for:** the glance — proxy contacts looking at each other
+before answering means they have not worked it out between themselves.
+Response: *"No rush — that goes in the recap as an open item for you two."*
+Their ambiguity becomes a tracked action item, not your future problem.
+
+**Exit criteria:** You know who executes Lighthouse in the end client's
+tenant and who your day-to-day technical counterpart is.
+
+---
+
+**Service Model + The Plan (15 min)**
+Pitch the model then walk the pipeline.
+
+Service model in one breath:
+- Lighthouse access into your workspace
+- Curated managed detections we configure and maintain
+- Automated triage that packages incidents and pushes to ServiceNow
+- Client portal where your team manages tickets
+
+The pipeline:
+- Walk Steps 1–9 at a high level
+- Name the critical path out loud: *"Everything starts when the
+  Lighthouse delegation executes — that is the one domino."*
+- Teach the no-re-delegation fact calmly with the doc in hand:
+  *"One thing worth knowing — Azure does not allow Lighthouse access
+  to be passed through. Your existing access to their environment
+  cannot be extended to us. Their tenant admin has to execute a
+  delegation directly to our tenant. We have step-by-step guidance
+  for exactly this — it goes out with our follow-up today."*
+- Close with the North Star sentence
+
+---
+
+**About the Client (10 min)**
+Light discovery only — what the proxy plausibly knows:
+- Rough size and industry
+- Compliance context
+- Why now — what drove this
+- What the client has been promised
+- Who their technical people are
+- Which portal does the client's team work in day-to-day
+  (Azure portal or Defender portal)
+
+---
+
+**Next Actions & Cadence (10 min)**
+Two-column close. Give yourself visible homework too.
+
+**Their homework:**
+- [ ] Intro platform team to end client's technical contact
+- [ ] Relay intake package to end client
+      (README, ClientInformation spreadsheet,
+      EnvironmentProfile template, DefenderXDR guide,
+      Lighthouse guidance)
+- [ ] Named contacts confirmed: technical counterpart,
+      access approver, escalation
+- [ ] Target: Lighthouse delegation executed within
+      5 business days — assign a named person with a date
+- [ ] Confirm end client's Microsoft support plan is
+      above Basic
+
+**Our homework (say these out loud):**
+- [ ] Send full intake package + Lighthouse doc by end of day
+- [ ] Run audit workbook within 5 business days of access
+- [ ] Deliver Phase 1 findings + gap report — first wow deliverable
+- [ ] Recap email with owners and dates within 24 hours
+
+**Before anyone leaves:**
+- Weekly sync agreed and scheduled
+- Technical discovery session booked with end client's
+  Sentinel admin explicitly invited
+- Next meeting date on the calendar before the call ends
+
+---
+
+### 30-Minute Fallback Agenda
+Intros (3) → Block Zero (10) → The Plan (7) → Next Actions (10)
+Discovery travels by document. Relationship clarity and access
+momentum cannot wait.
+
+---
+
+## Key Technical Facts
+
+- **Lighthouse cannot be re-delegated.** Proxy's existing access to end
+  client's tenant cannot pass through to us. End client's tenant admin
+  must execute a delegation directly to our tenant.
+- **Lighthouse alone cannot deploy data connectors** in a managed
+  workspace — connector-side actions require GDAP or hands in the
+  client's tenant. Existing workspace means connectors already exist;
+  client-side hands needed only for changes or fixes.
+- **Sentinel Azure portal retirement: March 31, 2027** (extended from
+  July 2026). Lighthouse remains the supported MSSP pattern. Our
+  Defender portal process is on the roadmap — not a blocker for
+  this
